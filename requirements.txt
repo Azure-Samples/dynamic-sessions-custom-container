@@ -1,0 +1,9 @@
+agent-framework
+azure-identity
+flask
+flask-restx
+werkzeug
+azure-mgmt-containerinstance
+azure-mgmt-resource
+requests
+aiohttp

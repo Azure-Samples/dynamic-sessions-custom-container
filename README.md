@@ -1,3 +1,338 @@
-# Repository setup required :wave:
-    
-Please visit the website URL :point_right: for this repository to complete the setup of this repository and configure access controls.
+---
+page_type: sample
+languages:
+- python
+- bicep
+products:
+- azure-container-apps
+- azure-openai
+- azure-container-registry
+name: Microsoft Agent Framework with Azure Container Apps Custom Container Sessions
+description: AI agent powered by Microsoft Agent Framework with secure Python code execution in custom containers using Azure Container Apps Dynamic Sessions
+urlFragment: aca-agent-framework-sessions
+---
+
+# Microsoft Agent Framework with Azure Container Apps Custom Container Sessions
+
+This project demonstrates how to use **Azure Container Apps dynamic sessions with custom containers** to create an AI-powered agent using **Microsoft Agent Framework** (successor to AutoGen) that can execute Python code securely with pre-installed data science libraries.
+
+## Overview
+
+The application is a Flask-based web interface that leverages **Microsoft Agent Framework** for AI orchestration and **Azure Container Apps dynamic sessions with custom containers** for secure Python code execution. When users request calculations or Python code execution, the agent automatically executes code in isolated containers pre-configured with numpy, pandas, and matplotlib.
+
+## Features
+
+- **Custom Container Sessions**: Primary feature using Azure Container Apps dynamic sessions with custom Docker containers for secure Python code execution
+- **Pre-installed Libraries**: Custom container includes numpy, pandas, matplotlib, and data file format support (openpyxl, xlrd, pyarrow, lxml)
+- **Microsoft Agent Framework**: Next-generation AI orchestration with intelligent tool selection
+- **Azure OpenAI Integration**: GPT-4o-mini model with managed identity authentication
+- **Interactive Web UI**: Modern chat interface with session tracking and code execution visualization
+- **Secure Isolated Execution**: Each code execution runs in a separate, secure Hyper-V isolated container
+- **Session Management**: Automatic lifecycle tracking with visual session status indicators
+
+## Prerequisites
+
+- Python 3.10 or later
+- Azure subscription with access to:
+  - **Azure Container Apps** (for custom container session pools)
+  - **Azure OpenAI Service** (for AI agent capabilities)
+  - **Azure Container Registry** (for storing custom container images)
+- Azure CLI installed and configured
+- [Azure Developer CLI (azd)](https://learn.microsoft.com/azure/developer/azure-developer-cli/install-azd) installed
+- Docker (for local development)
+
+## Quick Start with Azure Developer CLI (azd)
+
+The easiest way to deploy this application is using the Azure Developer CLI (azd):
+
+### 1. Deploy to Azure
+
+```bash
+# Clone the repository
+git clone <your-repo-url>
+cd aca-agent-framework-sessions
+
+# Login to Azure
+azd auth login
+
+# Provision infrastructure and deploy application
+azd up
+```
+
+The `azd up` command will:
+
+- Provision Azure infrastructure (Container Registry, OpenAI, Container Apps Environment, Session Pool)
+- Build and push the custom session container to Azure Container Registry
+- Deploy the Agent Framework application to Azure Container Apps
+- Configure managed identity and RBAC permissions
+
+### 2. Access Your Application
+
+After deployment, azd will provide you with:
+- **Application URL**: Access your chat interface at the deployed URL
+- **Pre-installed Libraries**: Custom container includes numpy, pandas, matplotlib, and data file format libraries
+- **Environment Details**: See resource details with `azd show`
+
+### 3. Manage Your Deployment
+
+```bash
+# View deployment status and URLs
+azd show
+
+# Redeploy after code changes
+azd deploy
+
+# View logs
+azd logs
+
+# Clean up resources
+azd down
+```
+
+## Local Development
+
+### 1. Setup Environment
+
+```bash
+# Create virtual environment
+python -m venv .venv
+
+# Activate virtual environment
+# Windows:
+.venv\Scripts\activate
+# Linux/macOS:
+source .venv/bin/activate
+
+# Install dependencies
+pip install -r requirements.txt
+```
+
+### 2. Configure Environment Variables
+
+Set the required environment variables:
+
+```bash
+# Windows (PowerShell)
+$env:AZURE_OPENAI_ENDPOINT="<your-azure-openai-endpoint>"
+$env:AZURE_OPENAI_DEPLOYMENT="gpt-4o-mini"
+$env:AZURE_CONTAINER_APPS_SESSION_POOL_ENDPOINT="<your-session-pool-management-endpoint>"
+
+# Linux/macOS
+export AZURE_OPENAI_ENDPOINT="<your-azure-openai-endpoint>"
+export AZURE_OPENAI_DEPLOYMENT="gpt-4o-mini"
+export AZURE_CONTAINER_APPS_SESSION_POOL_ENDPOINT="<your-session-pool-management-endpoint>"
+```
+
+### 3. Run Locally
+
+```bash
+python main.py
+```
+
+Access the application at:
+
+- **Chat Interface**: <http://localhost:8080>
+- **API Documentation**: <http://localhost:8080/docs/>
+- **Health Check**: <http://localhost:8080/health>
+
+## How Custom Container Sessions Work
+
+This application showcases **Azure Container Apps dynamic sessions with custom containers**:
+
+1. **Custom Container Build**: The `session-container/Dockerfile` defines a Python environment with pre-installed libraries
+2. **Container Registration**: azd hooks automatically build and push the container to Azure Container Registry
+3. **Session Pool Configuration**: The session pool is configured to use the custom container image
+4. **Code Execution**: When the agent needs to run Python code, it requests a session from the pool
+5. **Isolated Execution**: Code runs in a secure, pre-configured container with all required libraries
+6. **State Persistence**: Variables persist within the same session for follow-up calculations
+7. **Resource Management**: Sessions automatically scale based on demand and timeout after inactivity
+
+### Example Interaction Flow
+
+```text
+User: "Calculate the factorial of 10"
+Agent: Detects need for code execution → Calls execute_in_dynamic_session tool
+Session Pool: Allocates custom container → Runs Python code → Returns result
+Agent: Formats and displays: "Factorial of 10 is 3,628,800"
+
+User: "Now find the square root of that number"
+Agent: Uses same session → Executes code → Returns result (maintains state)
+Session Pool: Returns "1,904.93..." (remembers previous calculation)
+```
+
+## API Usage
+
+### Chat Endpoint
+
+**POST** `/chat`
+
+```json
+{
+  "prompt": "Calculate the mean of [1, 2, 3, 4, 5]",
+  "session_id": "user_123"
+}
+```
+
+Response:
+
+```json
+{
+  "response": "I've calculated that for you.",
+  "agent": "Microsoft Agent Framework SmartAssistant",
+  "model": "gpt-4o-mini",
+  "tools_used": [
+    {
+      "name": "execute_in_dynamic_session",
+      "icon": "📦",
+      "description": "Python Execution"
+    }
+  ],
+  "session_id": "user_123"
+}
+```
+
+### Interactive Web Interface
+
+The web interface demonstrates custom container sessions:
+
+- **Automatic Code Execution**: Math and calculation questions trigger Python code execution in custom containers
+- **Pre-installed Libraries**: Access numpy, pandas, matplotlib, and more without installation
+- **Session Tracking**: Visual indicators show active sessions and which tool was used
+- **Code Visualization**: See the Python code that was executed and its output
+- **Session Persistence**: Follow-up questions maintain context within the same session
+
+## Key Components
+
+### Azure Container Apps Custom Container Sessions
+
+- **Primary feature**: Secure, isolated Python execution with pre-installed libraries
+- **Custom container**: Python 3.11 with numpy, pandas, matplotlib, requests, flask, and data processing libraries
+- **Dynamic scaling**: Sessions are created and destroyed based on demand
+- **Pre-configured environment**: No need to install packages during execution
+- **Security**: Hyper-V isolation between different user sessions
+
+### Microsoft Agent Framework
+
+- **Successor to AutoGen**: Next-generation AI orchestration framework
+- **Intelligent tool selection**: Automatically chooses the right tool based on user intent
+- **Type-safe functions**: `@ai_function` decorator for automatic schema generation
+- **Session management**: Maintains conversation state across multiple interactions
+
+### Azure OpenAI Integration
+
+- **GPT-4o-mini model**: Fast and efficient for agent orchestration and code generation
+- **Managed identity**: Keyless authentication for secure service-to-service communication
+- **Automatic code detection**: Identifies when Python execution is needed for math/calculations
+
+### Authentication & Security
+
+- **Managed Identity**: User-assigned managed identity for all Azure service communication
+- **No credentials in code**: Uses Azure DefaultAzureCredential
+- **Role-based access**: Proper RBAC configuration for OpenAI and session pool access
+- **Container isolation**: Hyper-V isolation for secure code execution
+
+## Project Structure
+
+```
+├── main.py                      # Agent Framework application with Flask UI
+├── Dockerfile                   # Main application container
+├── requirements.txt             # Python dependencies for main app
+├── session-container/
+│   ├── Dockerfile              # Custom session executor container
+│   └── server.py               # Session execution server
+├── infra/
+│   └── main.bicep              # Azure infrastructure as code
+├── azure.yaml                   # azd configuration with hooks
+├── docs/
+│   ├── MANAGED-IDENTITY.md     # Keyless authentication guide
+│   ├── OBSERVABILITY.md        # Monitoring and tracing setup
+│   └── VNET-INTEGRATION.md     # Private networking configuration
+└── README.md
+```
+
+## Configuration
+
+### Azure YAML Hooks
+
+The `azure.yaml` includes post-provision hooks that automatically build and push the custom session container to Azure Container Registry during deployment:
+
+```yaml
+hooks:
+  postprovision:
+    windows:
+      run: az acr build --registry <acr-name> --image dynamic-session-executor:latest ./session-container
+```
+
+### Bicep Parameters
+
+Key parameters in `infra/main.bicep`:
+
+- `openAIModelName`: GPT model to deploy (default: gpt-4o-mini)
+- `maxConcurrentSessions`: Maximum parallel sessions (default: 10)
+- `readySessionInstances`: Pre-warmed sessions for fast response (default: 5)
+- `enableVNetIntegration`: Enable private networking (default: false)
+
+### Custom Container Libraries
+
+The custom session container (`session-container/Dockerfile`) includes:
+
+- **Data Science**: numpy, pandas, matplotlib
+- **Data Processing**: openpyxl, xlrd, pyarrow, lxml
+- **Networking**: requests
+- **Web Framework**: flask, gunicorn
+
+## Resources Deployed
+
+- **Azure OpenAI Service**: GPT-4o-mini deployment for agent intelligence
+- **Container Apps Environment**: Serverless hosting platform
+- **Dynamic Session Pool**: Custom container execution environment
+- **Container Registry**: Stores custom session container image
+- **User-Assigned Managed Identity**: Secure authentication across services
+- **Log Analytics**: Centralized monitoring and diagnostics
+
+## Troubleshooting
+
+### Common Issues
+
+1. **Authentication Errors**: Verify managed identity has proper role assignments
+2. **Session Pool Not Available**: Check that custom container was built and pushed successfully
+3. **Environment Variables**: Ensure all required environment variables are configured
+4. **Container Build Failures**: Check Azure Container Registry build logs
+
+### Required Azure Roles
+
+- **Cognitive Services OpenAI User**: For Azure OpenAI access
+- **AcrPull**: For pulling custom container images from registry
+- **Azure ContainerApps Session Executor**: For session pool access
+
+### Debugging
+
+Check the application logs:
+
+```bash
+azd logs
+```
+
+View session pool status in Azure Portal:
+```
+Container Apps Environment → Session Pools → <your-pool-name>
+```
+
+## Additional Documentation
+
+- [MANAGED-IDENTITY.md](docs/MANAGED-IDENTITY.md) - Keyless authentication setup and best practices
+- [OBSERVABILITY.md](docs/OBSERVABILITY.md) - Application monitoring and distributed tracing
+- [VNET-INTEGRATION.md](docs/VNET-INTEGRATION.md) - Private network configuration for enterprise scenarios
+
+## License
+
+This project is licensed under the MIT License - see the LICENSE file for details.
+
+## References
+
+- [Azure Container Apps Dynamic Sessions Overview](https://learn.microsoft.com/azure/container-apps/sessions)
+- [Azure Container Apps Sessions Custom Containers](https://learn.microsoft.com/azure/container-apps/sessions-custom-container)
+- [Microsoft Agent Framework Documentation](https://microsoft.github.io/agent-framework/)
+- [Azure Developer CLI Documentation](https://learn.microsoft.com/azure/developer/azure-developer-cli/)
+- [Azure Container Apps Documentation](https://learn.microsoft.com/azure/container-apps/)
+- [Azure OpenAI Service](https://learn.microsoft.com/azure/ai-services/openai/)

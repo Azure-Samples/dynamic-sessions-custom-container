@@ -1,0 +1,49 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/Azure/azure-dev/refs/heads/main/schemas/v1.0/azure.yaml.json
+
+name: aca-agent-framework-sessions
+metadata:
+  template: aca-agent-framework-sessions@0.0.1-beta
+
+infra:
+  provider: bicep
+  path: infra
+  module: main
+
+hooks:
+  postprovision:
+    windows:
+      shell: pwsh
+      run: |
+        Write-Host "Building and pushing session container to ACR..."
+        $acrName = azd env get-value AZURE_CONTAINER_REGISTRY_ENDPOINT
+        if (-not $acrName) {
+          Write-Error "ACR endpoint not found"
+          exit 1
+        }
+        $registryName = $acrName.Split('.')[0]
+        Write-Host "Registry: $registryName"
+        # Use --no-logs to avoid Windows encoding issues with progress bars
+        az acr build --registry $registryName --image dynamic-session-executor:latest --no-logs ./session-container
+        Write-Host "✅ Session container built and pushed"
+    posix:
+      shell: sh
+      run: |
+        echo "Building and pushing session container to ACR..."
+        ACR_NAME=$(azd env get-value AZURE_CONTAINER_REGISTRY_ENDPOINT)
+        if [ -z "$ACR_NAME" ]; then
+          echo "❌ ACR endpoint not found"
+          exit 1
+        fi
+        REGISTRY_NAME=$(echo $ACR_NAME | cut -d. -f1)
+        echo "Registry: $REGISTRY_NAME"
+        az acr build --registry $REGISTRY_NAME --image dynamic-session-executor:latest ./session-container
+        echo "✅ Session container built and pushed"
+
+services:
+  agent-framework-app:
+    project: .
+    language: python
+    host: containerapp
+    docker:
+      path: ./Dockerfile
+      context: .

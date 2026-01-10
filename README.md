@@ -1,17 +1,3 @@
----
-page_type: sample
-languages:
-- python
-- bicep
-products:
-- azure-container-apps
-- azure-openai
-- azure-container-registry
-name: Microsoft Agent Framework with Azure Container Apps Custom Container Sessions
-description: AI agent powered by Microsoft Agent Framework with secure Python code execution in custom containers using Azure Container Apps Dynamic Sessions
-urlFragment: aca-agent-framework-sessions
----
-
 # Microsoft Agent Framework with Azure Container Apps Custom Container Sessions
 
 This project demonstrates how to use **Azure Container Apps dynamic sessions with custom containers** to create an AI-powered agent using **Microsoft Agent Framework** (successor to AutoGen) that can execute Python code securely with pre-installed data science libraries.

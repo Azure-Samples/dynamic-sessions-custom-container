@@ -32,19 +32,19 @@ The application is a Flask-based web interface that leverages **Microsoft Agent 
     │  - GPT-4o-mini       │  │  (Custom Containers)        │
     │  - Agent LLM         │  │                             │
     └──────────────────────┘  │  ┌───────────────────────┐  │
-                               │  │ Session Container     │  │
-                               │  │ - Python 3.11         │  │
-                               │  │ - numpy, pandas       │  │
-                               │  │ - matplotlib          │  │
-                               │  │ - Isolated execution  │  │
-                               │  └───────────────────────┘  │
-                               └─────────────────────────────┘
+                              │  │ Session Container     │  │
+                              │  │ - Python 3.11         │  │
+                              │  │ - numpy, pandas       │  │
+                              │  │ - matplotlib          │  │
+                              │  │ - Isolated execution  │  │
+                              │  └───────────────────────┘  │
+                              └─────────────────────────────┘
                                           │ Pulls from
                                           ▼
-                               ┌──────────────────────────────┐
-                               │  Azure Container Registry    │
-                               │  - Executor container image  │
-                               └──────────────────────────────┘
+                              ┌──────────────────────────────┐
+                              │  Azure Container Registry    │
+                              │  - Executor container image  │
+                              └──────────────────────────────┘
 ```
 
 ## Features

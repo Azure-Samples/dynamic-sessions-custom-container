@@ -6,6 +6,47 @@ This project demonstrates how to use **Azure Container Apps dynamic sessions wit
 
 The application is a Flask-based web interface that leverages **Microsoft Agent Framework** for AI orchestration and **Azure Container Apps dynamic sessions with custom containers** for secure Python code execution. When users request calculations or Python code execution, the agent automatically executes code in isolated containers pre-configured with numpy, pandas, and matplotlib.
 
+## Architecture
+
+```
+                    ┌─────────────────────────┐
+                    │    User/Client          │
+                    └───────────┬─────────────┘
+                                │ HTTPS
+                                ▼
+            ┌───────────────────────────────────────┐
+            │  Azure Container App                  │
+            │  (Agent Framework)                    │
+            │  ┌─────────────────────────────────┐  │
+            │  │ Flask API + Agent Framework     │  │
+            │  │ - Chat interface                │  │
+            │  │ - Tool selection & orchestration│  │
+            │  └─────────────────────────────────┘  │
+            └───────┬──────────────────┬────────────┘
+                    │                  │
+        Managed     │                  │ Managed
+        Identity    │                  │ Identity
+                    ▼                  ▼
+    ┌──────────────────────┐  ┌─────────────────────────────┐
+    │  Azure OpenAI        │  │  Dynamic Session Pool       │
+    │  - GPT-4o-mini       │  │  (Custom Containers)        │
+    │  - Agent LLM         │  │                             │
+    └──────────────────────┘  │  ┌───────────────────────┐  │
+                               │  │ Session Container     │  │
+                               │  │ - Python 3.11         │  │
+                               │  │ - numpy, pandas       │  │
+                               │  │ - matplotlib          │  │
+                               │  │ - Isolated execution  │  │
+                               │  └───────────────────────┘  │
+                               └─────────────────────────────┘
+                                          │ Pulls from
+                                          ▼
+                               ┌──────────────────────────────┐
+                               │  Azure Container Registry    │
+                               │  - Executor container image  │
+                               └──────────────────────────────┘
+```
+
 ## Features
 
 - **Custom Container Sessions**: Primary feature using Azure Container Apps dynamic sessions with custom Docker containers for secure Python code execution

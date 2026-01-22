@@ -77,21 +77,24 @@ The easiest way to deploy this application is using the Azure Developer CLI (azd
 ```bash
 # Clone the repository
 git clone <your-repo-url>
-cd aca-agent-framework-sessions
+cd dynamic-sessions-custom-container
 
 # Login to Azure
 azd auth login
 
-# Provision infrastructure and deploy application
+# Step 1: Provision infrastructure and build session container image
+azd provision
+
+# Step 2: Create session pool and deploy application
 azd up
 ```
 
-The `azd up` command will:
+The deployment requires two steps because custom container sessions need the image to exist in ACR before the session pool can be created:
 
-- Provision Azure infrastructure (Container Registry, OpenAI, Container Apps Environment, Session Pool)
-- Build and push the custom session container to Azure Container Registry
-- Deploy the Agent Framework application to Azure Container Apps
-- Configure managed identity and RBAC permissions
+1. **`azd provision`**: Creates Azure Container Registry, OpenAI, and Container Apps Environment. The `postprovision` hook automatically builds and pushes the session executor image to ACR.
+2. **`azd up`**: Creates the Session Pool (image now exists) and deploys the Agent Framework application.
+
+> **Note**: This sample uses **custom container sessions** (not the built-in `PythonLTS` container type). The built-in Python sessions work with a single `azd up`, but custom containers require this two-step approach.
 
 ### 2. Access Your Application
 
@@ -108,9 +111,6 @@ azd show
 
 # Redeploy after code changes
 azd deploy
-
-# View logs
-azd logs
 
 # Clean up resources
 azd down
@@ -281,13 +281,21 @@ The web interface demonstrates custom container sessions:
 
 ### Azure YAML Hooks
 
-The `azure.yaml` includes post-provision hooks that automatically build and push the custom session container to Azure Container Registry during deployment:
+The `azure.yaml` includes hooks that handle the two-phase deployment for custom containers:
+
+- **`preprovision`**: Checks if the session container image exists; sets `SKIP_SESSION_POOL` accordingly
+- **`postprovision`**: Builds and pushes the custom session container to ACR, marks image as pushed
 
 ```yaml
 hooks:
+  preprovision:
+    run: |
+      # Skip session pool on first run (image doesn't exist yet)
+      if SESSION_IMAGE_PUSHED != "true": SKIP_SESSION_POOL = true
   postprovision:
-    windows:
-      run: az acr build --registry <acr-name> --image dynamic-session-executor:latest ./session-container
+    run: |
+      az acr build --registry <acr-name> --image dynamic-session-executor:latest ./session-container
+      azd env set SESSION_IMAGE_PUSHED true
 ```
 
 ### Bicep Parameters
@@ -334,10 +342,12 @@ The custom session container (`session-container/Dockerfile`) includes:
 
 ### Debugging
 
-Check the application logs:
+Check the application logs in the Azure Portal:
+- Navigate to your Container App → Monitoring → Log stream
 
+Or use Azure CLI:
 ```bash
-azd logs
+az containerapp logs show --name <app-name> --resource-group <resource-group>
 ```
 
 View session pool status in Azure Portal:

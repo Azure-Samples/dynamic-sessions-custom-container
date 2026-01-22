@@ -19,6 +19,9 @@ param openAICapacity int = 30
 @description('Enable Azure Container Apps dynamic sessions')
 param enableDynamicSessions bool = true
 
+@description('Skip session pool creation (used during initial provisioning before container image exists)')
+param skipSessionPool bool = true
+
 @description('Maximum concurrent sessions for the session pool')
 param maxConcurrentSessions int = 10
 
@@ -187,7 +190,8 @@ resource containerAppsEnvironment 'Microsoft.App/managedEnvironments@2024-03-01'
 }
 
 // Azure Container Apps Dynamic Session Pool for secure code execution
-resource dynamicSessionPool 'Microsoft.App/sessionPools@2024-08-02-preview' = if (enableDynamicSessions) {
+// Only created when enableDynamicSessions is true AND skipSessionPool is false (image must exist in ACR first)
+resource dynamicSessionPool 'Microsoft.App/sessionPools@2024-08-02-preview' = if (enableDynamicSessions && !skipSessionPool) {
   name: sessionPoolName
   location: location
   identity: {
@@ -249,7 +253,7 @@ resource dynamicSessionPool 'Microsoft.App/sessionPools@2024-08-02-preview' = if
 }
 
 // Role assignment for managed identity to execute sessions on the session pool
-resource sessionExecutorRoleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (enableDynamicSessions) {
+resource sessionExecutorRoleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (enableDynamicSessions && !skipSessionPool) {
   name: guid(dynamicSessionPool.id, userAssignedIdentity.id, 'SessionExecutor')
   scope: dynamicSessionPool
   properties: {
@@ -334,11 +338,11 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
             }
             {
               name: 'AZURE_SESSION_POOL_NAME'
-              value: enableDynamicSessions ? dynamicSessionPool.name : ''
+              value: (enableDynamicSessions && !skipSessionPool) ? dynamicSessionPool.name : ''
             }
             {
               name: 'AZURE_CONTAINER_APPS_SESSION_POOL_ENDPOINT'
-              value: enableDynamicSessions ? dynamicSessionPool.properties.poolManagementEndpoint : ''
+              value: (enableDynamicSessions && !skipSessionPool) ? dynamicSessionPool.properties.poolManagementEndpoint : ''
             }
             {
               name: 'SESSION_POOL_AUDIENCE'
@@ -368,8 +372,8 @@ output AZURE_OPENAI_DEPLOYMENT string = openAIModelName
 output CONTAINER_APP_URL string = 'https://${containerApp.properties.configuration.ingress.fqdn}'
 output AZURE_OPENAI_RESOURCE_NAME string = openAI.name
 output USER_ASSIGNED_IDENTITY_ID string = userAssignedIdentity.id
-output DYNAMIC_SESSION_POOL_NAME string = enableDynamicSessions ? dynamicSessionPool.name : ''
-output DYNAMIC_SESSION_POOL_ENDPOINT string = enableDynamicSessions ? dynamicSessionPool.properties.poolManagementEndpoint : ''
+output DYNAMIC_SESSION_POOL_NAME string = (enableDynamicSessions && !skipSessionPool) ? dynamicSessionPool.name : ''
+output DYNAMIC_SESSION_POOL_ENDPOINT string = (enableDynamicSessions && !skipSessionPool) ? dynamicSessionPool.properties.poolManagementEndpoint : ''
 output DYNAMIC_SESSIONS_ENABLED bool = enableDynamicSessions
 output VNET_ENABLED bool = enableVNetIntegration
 output VNET_NAME string = enableVNetIntegration ? vnet.name : ''

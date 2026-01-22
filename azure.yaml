@@ -1,8 +1,8 @@
 # yaml-language-server: $schema=https://raw.githubusercontent.com/Azure/azure-dev/refs/heads/main/schemas/v1.0/azure.yaml.json
 
-name: aca-agent-framework-sessions
+name: dynamic-sessions-custom-container
 metadata:
-  template: aca-agent-framework-sessions@0.0.1-beta
+  template: dynamic-sessions-custom-container@0.0.1-beta
 
 infra:
   provider: bicep
@@ -10,10 +10,41 @@ infra:
   module: main
 
 hooks:
+  preprovision:
+    windows:
+      shell: pwsh
+      run: |
+        # Check if session image was already pushed (second run)
+        $imagePushed = azd env get-value SESSION_IMAGE_PUSHED 2>$null
+        if ($imagePushed -eq "true") {
+          Write-Host "Session container image exists, enabling session pool creation..."
+          azd env set SKIP_SESSION_POOL false
+        } else {
+          Write-Host "First provision run - skipping session pool (image not yet in ACR)"
+          azd env set SKIP_SESSION_POOL true
+        }
+    posix:
+      shell: sh
+      run: |
+        # Check if session image was already pushed (second run)
+        IMAGE_PUSHED=$(azd env get-value SESSION_IMAGE_PUSHED 2>/dev/null || echo "")
+        if [ "$IMAGE_PUSHED" = "true" ]; then
+          echo "Session container image exists, enabling session pool creation..."
+          azd env set SKIP_SESSION_POOL false
+        else
+          echo "First provision run - skipping session pool (image not yet in ACR)"
+          azd env set SKIP_SESSION_POOL true
+        fi
   postprovision:
     windows:
       shell: pwsh
       run: |
+        $imagePushed = azd env get-value SESSION_IMAGE_PUSHED 2>$null
+        if ($imagePushed -eq "true") {
+          Write-Host "Session container already built, skipping..."
+          exit 0
+        }
+        
         Write-Host "Building and pushing session container to ACR..."
         $acrName = azd env get-value AZURE_CONTAINER_REGISTRY_ENDPOINT
         if (-not $acrName) {
@@ -22,12 +53,22 @@ hooks:
         }
         $registryName = $acrName.Split('.')[0]
         Write-Host "Registry: $registryName"
-        # Use --no-logs to avoid Windows encoding issues with progress bars
         az acr build --registry $registryName --image dynamic-session-executor:latest --no-logs ./session-container
+        if ($LASTEXITCODE -ne 0) {
+          Write-Error "Failed to build and push session container"
+          exit 1
+        }
+        azd env set SESSION_IMAGE_PUSHED true
         Write-Host "✅ Session container built and pushed"
     posix:
       shell: sh
       run: |
+        IMAGE_PUSHED=$(azd env get-value SESSION_IMAGE_PUSHED 2>/dev/null || echo "")
+        if [ "$IMAGE_PUSHED" = "true" ]; then
+          echo "Session container already built, skipping..."
+          exit 0
+        fi
+        
         echo "Building and pushing session container to ACR..."
         ACR_NAME=$(azd env get-value AZURE_CONTAINER_REGISTRY_ENDPOINT)
         if [ -z "$ACR_NAME" ]; then
@@ -37,6 +78,11 @@ hooks:
         REGISTRY_NAME=$(echo $ACR_NAME | cut -d. -f1)
         echo "Registry: $REGISTRY_NAME"
         az acr build --registry $REGISTRY_NAME --image dynamic-session-executor:latest ./session-container
+        if [ $? -ne 0 ]; then
+          echo "❌ Failed to build and push session container"
+          exit 1
+        fi
+        azd env set SESSION_IMAGE_PUSHED true
         echo "✅ Session container built and pushed"
 
 services:

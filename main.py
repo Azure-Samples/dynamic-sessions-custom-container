@@ -447,9 +447,8 @@ if AZURE_OPENAI_ENDPOINT:
             credential=DefaultAzureCredential()
         )
         
-        # Create the agent using the official pattern from Microsoft docs
-        agent = chat_client.create_agent(
-            instructions="""You are an intelligent assistant with secure Python code execution in Azure Container Apps custom containers.
+        # Create the agent (compatibility with multiple agent-framework versions)
+        instructions = """You are an intelligent assistant with secure Python code execution in Azure Container Apps custom containers.
 
 Key behaviors:
 - Always analyze the user's request to determine which tool(s) are most appropriate
@@ -476,9 +475,21 @@ For code execution requests:
 - If code fails, the error will be captured and displayed - that's expected and valuable feedback
 - Let users learn from execution results rather than preventing them from running code
 
-Always think step-by-step about which tools will best serve the user's needs.""",
-            tools=[search_tools_available, execute_in_dynamic_session]
-        )
+Always think step-by-step about which tools will best serve the user's needs."""
+        tools = [search_tools_available, execute_in_dynamic_session]
+
+        if hasattr(chat_client, "create_agent"):
+            agent = chat_client.create_agent(
+                instructions=instructions,
+                tools=tools
+            )
+        else:
+            agent = ChatAgent(
+                chat_client=chat_client,
+                instructions=instructions,
+                name="SmartAssistant",
+                tools=tools
+            )
         print(f"✅ Connected to Azure OpenAI: {AZURE_OPENAI_ENDPOINT}")
         print(f"🤖 Using deployment: {AZURE_OPENAI_DEPLOYMENT}")
         print("🔧 Agent Framework agent created successfully using official pattern")

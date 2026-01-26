@@ -139,14 +139,18 @@ pip install -r requirements.txt
 Set the required environment variables:
 
 ```bash
-# Windows (PowerShell)
+# Windows (PowerShell) - run each line separately
 $env:AZURE_OPENAI_ENDPOINT="<your-azure-openai-endpoint>"
-$env:AZURE_OPENAI_DEPLOYMENT="gpt-4o-mini"
+$env:AZURE_OPENAI_CHAT_DEPLOYMENT_NAME="gpt-4o-mini"
+# (Optional fallback name if you prefer)
+# $env:AZURE_OPENAI_DEPLOYMENT="gpt-4o-mini"
 $env:AZURE_CONTAINER_APPS_SESSION_POOL_ENDPOINT="<your-session-pool-management-endpoint>"
 
 # Linux/macOS
 export AZURE_OPENAI_ENDPOINT="<your-azure-openai-endpoint>"
-export AZURE_OPENAI_DEPLOYMENT="gpt-4o-mini"
+export AZURE_OPENAI_CHAT_DEPLOYMENT_NAME="gpt-4o-mini"
+# (Optional fallback name if you prefer)
+# export AZURE_OPENAI_DEPLOYMENT="gpt-4o-mini"
 export AZURE_CONTAINER_APPS_SESSION_POOL_ENDPOINT="<your-session-pool-management-endpoint>"
 ```
 

@@ -442,7 +442,7 @@ if AZURE_OPENAI_ENDPOINT:
     try:
         # Create Agent Framework client with managed identity - following official docs pattern
         chat_client = AzureOpenAIChatClient(
-            model=AZURE_OPENAI_DEPLOYMENT,
+            deployment_name=AZURE_OPENAI_DEPLOYMENT,
             azure_endpoint=AZURE_OPENAI_ENDPOINT,
             credential=DefaultAzureCredential()
         )

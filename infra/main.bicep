@@ -16,6 +16,9 @@ param openAIModelVersion string = '2024-07-18'
 @description('Azure OpenAI deployment capacity')
 param openAICapacity int = 30
 
+@description('Entra ID principal (user) object ID to grant Azure OpenAI access for local runs')
+param principalId string = ''
+
 @description('Enable Azure Container Apps dynamic sessions')
 param enableDynamicSessions bool = true
 
@@ -132,6 +135,17 @@ resource openAIUserRoleAssignment 'Microsoft.Authorization/roleAssignments@2022-
     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '5e0bd9bd-7b93-4f28-af87-19fc36ad61bd')
     principalId: userAssignedIdentity.properties.principalId
     principalType: 'ServicePrincipal'
+  }
+}
+
+// Optional: grant deploying user access to Azure OpenAI for local runs (azd/CLI auth)
+resource openAIUserLocalRoleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (!empty(principalId)) {
+  scope: openAI
+  name: guid(openAI.id, principalId, 'local-openai-user')
+  properties: {
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '5e0bd9bd-7b93-4f28-af87-19fc36ad61bd')
+    principalId: principalId
+    principalType: 'User'
   }
 }
 
@@ -260,6 +274,20 @@ resource sessionExecutorRoleAssignment 'Microsoft.Authorization/roleAssignments@
     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '0fb8eba5-a2bb-4abe-b1c1-49dfad359bb0') // Azure ContainerApps Session Executor
     principalId: userAssignedIdentity.properties.principalId
     principalType: 'ServicePrincipal'
+  }
+  dependsOn: [
+    dynamicSessionPool
+  ]
+}
+
+// Optional: grant deploying user access to the session pool for local runs
+resource sessionExecutorLocalRoleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (enableDynamicSessions && !skipSessionPool && !empty(principalId)) {
+  name: guid(dynamicSessionPool.id, principalId, 'local-session-executor')
+  scope: dynamicSessionPool
+  properties: {
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '0fb8eba5-a2bb-4abe-b1c1-49dfad359bb0') // Azure ContainerApps Session Executor
+    principalId: principalId
+    principalType: 'User'
   }
   dependsOn: [
     dynamicSessionPool

@@ -96,6 +96,8 @@ The deployment requires two steps because custom container sessions need the ima
 
 > **Note**: This sample uses **custom container sessions** (not the built-in `PythonLTS` container type). The built-in Python sessions work with a single `azd up`, but custom containers require this two-step approach.
 
+> **Local run access**: During `azd provision`, the template automatically grants the signed-in user the **Cognitive Services OpenAI User** role on the Azure OpenAI resource and the **Azure Container Apps Session Executor** role on the session pool so local runs (using Azure CLI auth) work without extra manual steps.
+
 ### 2. Access Your Application
 
 After deployment, azd will provide you with:
@@ -136,27 +138,29 @@ pip install -r requirements.txt
 
 ### 2. Configure Environment Variables
 
-Set the required environment variables:
+For local runs, you can load the azd environment values (recommended) or set them manually.
 
 ```bash
-# Windows (PowerShell) - run each line separately
-$env:AZURE_OPENAI_ENDPOINT="<your-azure-openai-endpoint>"
-$env:AZURE_OPENAI_CHAT_DEPLOYMENT_NAME="gpt-4o-mini"
-# (Optional fallback name if you prefer)
-# $env:AZURE_OPENAI_DEPLOYMENT="gpt-4o-mini"
-$env:AZURE_CONTAINER_APPS_SESSION_POOL_ENDPOINT="<your-session-pool-management-endpoint>"
+# Windows (PowerShell)
+./scripts/load-env.ps1
 
 # Linux/macOS
-export AZURE_OPENAI_ENDPOINT="<your-azure-openai-endpoint>"
-export AZURE_OPENAI_CHAT_DEPLOYMENT_NAME="gpt-4o-mini"
-# (Optional fallback name if you prefer)
-# export AZURE_OPENAI_DEPLOYMENT="gpt-4o-mini"
-export AZURE_CONTAINER_APPS_SESSION_POOL_ENDPOINT="<your-session-pool-management-endpoint>"
+source ./scripts/load-env.sh
 ```
+
+If you prefer manual configuration, set:
+
+- `AZURE_OPENAI_ENDPOINT`
+- `AZURE_OPENAI_CHAT_DEPLOYMENT_NAME` (or `AZURE_OPENAI_DEPLOYMENT`)
+- `AZURE_CONTAINER_APPS_SESSION_POOL_ENDPOINT`
+- `SESSION_POOL_AUDIENCE` (defaults to `https://dynamicsessions.io/.default`)
 
 ### 3. Run Locally
 
 ```bash
+# Ensure Azure CLI auth includes OpenAI scope (first time only)
+az login --scope https://cognitiveservices.azure.com/.default
+
 python main.py
 ```
 

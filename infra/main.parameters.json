@@ -10,6 +10,9 @@
     },
     "skipSessionPool": {
       "value": "${SKIP_SESSION_POOL=true}"
+    },
+    "principalId": {
+      "value": "${AZURE_PRINCIPAL_ID}"
     }
   }
 }

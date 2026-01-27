@@ -14,6 +14,14 @@ hooks:
     windows:
       shell: pwsh
       run: |
+        # Capture signed-in user object ID for local Azure OpenAI access
+        $principalId = azd env get-value AZURE_PRINCIPAL_ID 2>$null
+        if (-not $principalId) {
+          $principalId = az ad signed-in-user show --query id -o tsv 2>$null
+          if ($principalId) {
+            azd env set AZURE_PRINCIPAL_ID $principalId
+          }
+        }
         # Check if session image was already pushed (second run)
         $imagePushed = azd env get-value SESSION_IMAGE_PUSHED 2>$null
         if ($imagePushed -eq "true") {
@@ -26,6 +34,14 @@ hooks:
     posix:
       shell: sh
       run: |
+        # Capture signed-in user object ID for local Azure OpenAI access
+        PRINCIPAL_ID=$(azd env get-value AZURE_PRINCIPAL_ID 2>/dev/null || echo "")
+        if [ -z "$PRINCIPAL_ID" ]; then
+          PRINCIPAL_ID=$(az ad signed-in-user show --query id -o tsv 2>/dev/null || echo "")
+          if [ -n "$PRINCIPAL_ID" ]; then
+            azd env set AZURE_PRINCIPAL_ID "$PRINCIPAL_ID"
+          fi
+        fi
         # Check if session image was already pushed (second run)
         IMAGE_PUSHED=$(azd env get-value SESSION_IMAGE_PUSHED 2>/dev/null || echo "")
         if [ "$IMAGE_PUSHED" = "true" ]; then

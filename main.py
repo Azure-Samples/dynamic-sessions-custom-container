@@ -127,6 +127,11 @@ The AI agent automatically selects the appropriate tool(s) based on your request
     print(f"🔧 TOOL RESPONSE: Listed available tools")
     return tools_info
 
+def _trim_trailing_newlines(value: str) -> str:
+    if not value:
+        return value
+    return value.rstrip("\n")
+
 @ai_function
 def execute_in_dynamic_session(
     code: Annotated[str, Field(description="Python code to execute in the secure session")]
@@ -281,8 +286,8 @@ def execute_in_dynamic_session(
                 print(f"📊 DEBUG: Properties from response: {props}")
                 
                 # Capture stdout and stderr
-                stdout = props.get("stdout", "")
-                stderr = props.get("stderr", "")
+                stdout = _trim_trailing_newlines(props.get("stdout", ""))
+                stderr = _trim_trailing_newlines(props.get("stderr", ""))
                 status = props.get("status", "")
                 return_code = props.get("returnCode", None)
                 
@@ -320,8 +325,8 @@ def execute_in_dynamic_session(
                 print(f"📊 DEBUG: Direct format (no properties wrapper): {result}")
                 
                 # Capture output and error
-                stdout = result.get("output", "")
-                stderr = result.get("error", "")
+                stdout = _trim_trailing_newlines(result.get("output", ""))
+                stderr = _trim_trailing_newlines(result.get("error", ""))
                 return_code = result.get("return_code", 0)
                 success = result.get("success", True)
                 

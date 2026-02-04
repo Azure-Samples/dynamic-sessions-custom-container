@@ -5,10 +5,28 @@ import random
 import uuid
 import time
 import base64
+import threading
+import queue
 from datetime import datetime, timedelta
-from flask import Flask, request, jsonify, send_file
+from flask import Flask, request, jsonify, send_file, Response, stream_with_context
 from flask_restx import Api, Resource, fields, Namespace
-from agent_framework import ChatAgent, ai_function, AgentThread
+from agent_framework import ChatAgent, AgentThread
+try:
+    from agent_framework import ai_function
+except ImportError:
+    try:
+        from agent_framework.tools import ai_function
+    except ImportError:
+        try:
+            from agent_framework.decorators import ai_function
+        except ImportError:
+            try:
+                from agent_framework import tool as ai_function
+            except ImportError:
+                def ai_function(func=None, **_kwargs):
+                    def decorator(f):
+                        return f
+                    return decorator(func) if func else decorator
 from agent_framework.azure import AzureOpenAIChatClient
 from azure.identity import DefaultAzureCredential
 from typing import Annotated, List, Dict, Any, Optional
@@ -1100,30 +1118,58 @@ class ChatStream(Resource):
             
             thread = conversation_threads[session_id]
             
-            # Collect streaming responses
-            responses = []
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            
-            async def collect_stream():
-                async for chunk in agent.run_stream(prompt, thread=thread):
-                    if chunk.text:
-                        responses.append(chunk.text)
-                        print(f"📡 Streaming: {chunk.text}", end="", flush=True)
-            
-            loop.run_until_complete(collect_stream())
-            loop.close()
-            
-            full_response = "".join(responses)
-            print(f"\n✅ Streaming Complete")
-            
-            return {
-                "response": full_response,
-                "session_id": session_id,
-                "streaming": True,
-                "chunks_received": len(responses),
-                "agent": "Microsoft Agent Framework SmartAssistant"
-            }
+            def stream_generator():
+                q = queue.Queue()
+                
+                def run_async_stream():
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+
+                    async def collect_stream():
+                        try:
+                            async for chunk in agent.run_stream(prompt, thread=thread):
+                                if chunk.text:
+                                    q.put(("data", chunk.text))
+                                    print(f"📡 Streaming: {chunk.text}", end="", flush=True)
+                            q.put(("done", None))
+                        except Exception as stream_error:
+                            q.put(("error", str(stream_error)))
+
+                    loop.run_until_complete(collect_stream())
+                    loop.close()
+
+                threading.Thread(target=run_async_stream, daemon=True).start()
+
+                # Initial event so the connection starts immediately
+                yield "event: open\ndata: {}\n\n"
+
+                while True:
+                    try:
+                        kind, payload = q.get(timeout=10)
+                    except queue.Empty:
+                        # Keep-alive ping to avoid idle timeouts
+                        yield "event: ping\ndata: {}\n\n"
+                        continue
+
+                    if kind == "data" and payload is not None:
+                        yield f"data: {json.dumps({'text': payload, 'session_id': session_id})}\n\n"
+                    elif kind == "error" and payload is not None:
+                        yield f"event: error\ndata: {json.dumps({'error': payload, 'session_id': session_id})}\n\n"
+                        break
+                    elif kind == "done":
+                        yield f"event: done\ndata: {json.dumps({'session_id': session_id})}\n\n"
+                        break
+
+                print(f"\n✅ Streaming Complete")
+
+            return Response(
+                stream_with_context(stream_generator()),
+                mimetype="text/event-stream",
+                headers={
+                    "Cache-Control": "no-cache",
+                    "X-Accel-Buffering": "no"
+                }
+            )
         except Exception as e:
             print(f"❌ Streaming Error: {str(e)}")
             return {"error": str(e)}, 500

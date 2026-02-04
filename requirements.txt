@@ -1,8 +1,8 @@
 agent-framework
 azure-identity
-flask
+flask<3
 flask-restx
-werkzeug
+werkzeug<3
 azure-mgmt-containerinstance
 azure-mgmt-resource
 requests

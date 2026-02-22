@@ -10,23 +10,7 @@ import queue
 from datetime import datetime, timedelta
 from flask import Flask, request, jsonify, send_file, Response, stream_with_context
 from flask_restx import Api, Resource, fields, Namespace
-from agent_framework import ChatAgent, AgentThread
-try:
-    from agent_framework import ai_function
-except ImportError:
-    try:
-        from agent_framework.tools import ai_function
-    except ImportError:
-        try:
-            from agent_framework.decorators import ai_function
-        except ImportError:
-            try:
-                from agent_framework import tool as ai_function
-            except ImportError:
-                def ai_function(func=None, **_kwargs):
-                    def decorator(f):
-                        return f
-                    return decorator(func) if func else decorator
+from agent_framework import Agent, AgentSession, tool
 from agent_framework.azure import AzureOpenAIChatClient
 from azure.identity import DefaultAzureCredential
 from typing import Annotated, List, Dict, Any, Optional
@@ -128,7 +112,7 @@ active_sessions: Dict[str, Dict[str, Any]] = {}
 current_request_sessions: set = set()
 
 # Enhanced AI functions (tools) for the agent
-@ai_function
+@tool
 def search_tools_available() -> str:
     """List all available tools and their capabilities."""
     global current_tools_used
@@ -150,7 +134,7 @@ def _trim_trailing_newlines(value: str) -> str:
         return value
     return value.rstrip("\n")
 
-@ai_function
+@tool
 def execute_in_dynamic_session(
     code: Annotated[str, Field(description="Python code to execute in the secure session")]
 ) -> str:
@@ -501,18 +485,12 @@ For code execution requests:
 Always think step-by-step about which tools will best serve the user's needs."""
         tools = [search_tools_available, execute_in_dynamic_session]
 
-        if hasattr(chat_client, "create_agent"):
-            agent = chat_client.create_agent(
-                instructions=instructions,
-                tools=tools
-            )
-        else:
-            agent = ChatAgent(
-                chat_client=chat_client,
-                instructions=instructions,
-                name="SmartAssistant",
-                tools=tools
-            )
+        agent = Agent(
+            client=chat_client,
+            instructions=instructions,
+            name="SmartAssistant",
+            tools=tools
+        )
         print(f"✅ Connected to Azure OpenAI: {AZURE_OPENAI_ENDPOINT}")
         print(f"🤖 Using deployment: {AZURE_OPENAI_DEPLOYMENT}")
         print("🔧 Agent Framework agent created successfully using official pattern")
@@ -1033,23 +1011,23 @@ class Chat(Resource):
             print(f"📝 User Input: {prompt}")
             print("🤖 Agent analyzing request and selecting appropriate tools...")
             
-            # Get or create conversation thread for session continuity
+            # Get or create conversation session for continuity
             if session_id not in conversation_threads:
-                conversation_threads[session_id] = agent.get_new_thread()
-            
-            thread = conversation_threads[session_id]
-            
+                conversation_threads[session_id] = agent.create_session()
+
+            session = conversation_threads[session_id]
+
             # Reset tool usage tracking for this request
             global current_tools_used, current_request_sessions
             current_tools_used = []
             current_request_sessions = set()
             print(f"🔧 DEBUG: Reset current_tools_used and session tracking, starting fresh for this request")
-            
-            # Run the agent asynchronously with conversation thread
+
+            # Run the agent asynchronously with conversation session
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
             print(f"🤖 DEBUG: About to call agent.run() with prompt: {prompt[:50]}...")
-            result = loop.run_until_complete(agent.run(prompt, thread=thread))
+            result = loop.run_until_complete(agent.run(prompt, session=session))
             loop.close()
             print(f"🤖 DEBUG: agent.run() completed")
             
@@ -1060,7 +1038,7 @@ class Chat(Resource):
             print(f"✅ Agent Response Generated")
             print(f"📤 Response: {result.text[:100]}...")
             if tools_used:
-                print(f"🔧 Tools Used: {[tool['name'] for tool in tools_used]}")
+                print(f"🔧 Tools Used: {[t['name'] for t in tools_used]}")
             else:
                 print(f"⚠️ WARNING: No tools were used for this request!")
             
@@ -1083,7 +1061,7 @@ class Chat(Resource):
                 "model": AZURE_OPENAI_DEPLOYMENT,
                 "tools_used": tools_used,
                 "tools_available": tools_available,
-                "conversation_length": len(thread.messages) if hasattr(thread, 'messages') else 0,
+                "conversation_length": 0,
                 "active_sessions": sessions_copy if sessions_copy else None
             }
             print(f"📊 DEBUG: Returning response with active_sessions = {response_data.get('active_sessions')}")
@@ -1112,22 +1090,22 @@ class ChatStream(Resource):
             print(f"\n🚀 STREAMING REQUEST (Session: {session_id})")
             print(f"📝 User Input: {prompt}")
             
-            # Get or create conversation thread
+            # Get or create conversation session
             if session_id not in conversation_threads:
-                conversation_threads[session_id] = agent.get_new_thread()
-            
-            thread = conversation_threads[session_id]
-            
+                conversation_threads[session_id] = agent.create_session()
+
+            session = conversation_threads[session_id]
+
             def stream_generator():
                 q = queue.Queue()
-                
+
                 def run_async_stream():
                     loop = asyncio.new_event_loop()
                     asyncio.set_event_loop(loop)
 
                     async def collect_stream():
                         try:
-                            async for chunk in agent.run_stream(prompt, thread=thread):
+                            async for chunk in agent.run(prompt, stream=True, session=session):
                                 if chunk.text:
                                     q.put(("data", chunk.text))
                                     print(f"📡 Streaming: {chunk.text}", end="", flush=True)

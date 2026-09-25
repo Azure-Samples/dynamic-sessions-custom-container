@@ -1199,10 +1199,11 @@ def index():
             // Create message content with markdown-style formatting
             const messageContent = document.createElement('div');
             if (!isUser) {
-                // Process code blocks and bold text for bot messages
-                let formatted = text
-                    .replace(/\\*\\*(.+?)\\*\\*/g, '<strong>$1</strong>')
-                    .replace(/```([\\s\\S]*?)```/g, '<pre>$1</pre>')
+                // Escape first so untrusted sandbox output cannot inject markup,
+                // then apply markdown-style formatting.
+                let formatted = escapeHtml(text)
+                    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+                    .replace(/```([\s\S]*?)```/g, '<pre>$1</pre>')
                     .replace(/`([^`]+)`/g, '<code>$1</code>');
                 messageContent.innerHTML = formatted;
             } else {
@@ -1222,7 +1223,7 @@ def index():
                 toolsUsed.forEach((tool, index) => {
                     const toolBadge = document.createElement('span');
                     toolBadge.className = 'tool-badge';
-                    toolBadge.innerHTML = `${tool.icon} ${tool.description}`;
+                    toolBadge.textContent = `${tool.icon} ${tool.description}`;
                     toolsDiv.appendChild(toolBadge);
                     
                     // Add spacing between badges
@@ -1314,6 +1315,15 @@ def index():
             }
         }
 
+        function escapeHtml(value) {
+            return String(value === undefined || value === null ? '' : value)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#39;');
+        }
+
         function updateSessionPanel(sessions) {
             const sessionList = document.getElementById('sessionList');
             console.log('📊 Updating session panel:', sessions);
@@ -1334,19 +1344,19 @@ def index():
                 // Format session data with better readability
                 html += `
                     <div class="session-item">
-                        <div class="session-header">🔹 Session ID: ${shortId}...</div>
+                        <div class="session-header">🔹 Session ID: ${escapeHtml(shortId)}...</div>
                         <div class="session-details">
-                            <div><strong>Executions:</strong> ${sessionData.execution_count || 0}</div>
-                            <div><strong>Created:</strong> ${new Date(sessionData.created_at).toLocaleTimeString()}</div>
-                            ${sessionData.last_used ? `<div><strong>Last Used:</strong> ${new Date(sessionData.last_used).toLocaleTimeString()}</div>` : ''}
-                            ${sessionData.last_status ? `<div><strong>Status:</strong> ${sessionData.last_status}</div>` : ''}
-                            ${sessionData.last_returnCode !== undefined ? `<div><strong>Return Code:</strong> ${sessionData.last_returnCode}</div>` : ''}
-                            ${sessionData.last_stdout ? `<div class="output-section"><strong>stdout:</strong><pre>${sessionData.last_stdout}</pre></div>` : ''}
-                            ${sessionData.last_stderr ? `<div class="error-section"><strong>stderr:</strong><pre>${sessionData.last_stderr}</pre></div>` : ''}
+                            <div><strong>Executions:</strong> ${escapeHtml(sessionData.execution_count || 0)}</div>
+                            <div><strong>Created:</strong> ${escapeHtml(new Date(sessionData.created_at).toLocaleTimeString())}</div>
+                            ${sessionData.last_used ? `<div><strong>Last Used:</strong> ${escapeHtml(new Date(sessionData.last_used).toLocaleTimeString())}</div>` : ''}
+                            ${sessionData.last_status ? `<div><strong>Status:</strong> ${escapeHtml(sessionData.last_status)}</div>` : ''}
+                            ${sessionData.last_returnCode !== undefined ? `<div><strong>Return Code:</strong> ${escapeHtml(sessionData.last_returnCode)}</div>` : ''}
+                            ${sessionData.last_stdout ? `<div class="output-section"><strong>stdout:</strong><pre>${escapeHtml(sessionData.last_stdout)}</pre></div>` : ''}
+                            ${sessionData.last_stderr ? `<div class="error-section"><strong>stderr:</strong><pre>${escapeHtml(sessionData.last_stderr)}</pre></div>` : ''}
                         </div>
                         <details class="session-json-toggle">
                             <summary>View Raw JSON</summary>
-                            <pre class="session-json">${jsonData}</pre>
+                            <pre class="session-json">${escapeHtml(jsonData)}</pre>
                         </details>
                     </div>
                 `;

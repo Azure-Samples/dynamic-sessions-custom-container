@@ -8,10 +8,24 @@ param environmentName string = 'dev'
 param location string = 'eastus'
 
 @description('Azure OpenAI model name to deploy')
-param openAIModelName string = 'gpt-4o-mini'
+param openAIModelName string = 'gpt-5.6-sol'
 
 @description('Azure OpenAI model version to deploy')
-param openAIModelVersion string = '2024-07-18'
+param openAIModelVersion string = '2026-07-09'
+
+@allowed([
+  'Standard'
+  'GlobalStandard'
+  'DataZoneStandard'
+  'ProvisionedManaged'
+  'GlobalProvisionedManaged'
+  'DataZoneProvisionedManaged'
+  'GlobalBatch'
+  'DataZoneBatch'
+  'DeveloperTier'
+])
+@description('Azure OpenAI deployment SKU name. Must be supported by the selected model/version in the target region.')
+param openAIDeploymentSkuName string = 'GlobalStandard'
 
 @description('Azure OpenAI deployment capacity')
 param openAICapacity int = 30
@@ -33,6 +47,34 @@ param readySessionInstances int = 5
 
 @description('Enable VNet integration for Container Apps Environment')
 param enableVNetIntegration bool = false
+
+@description('Enable Entra sign-in via Container Apps authentication')
+param enableEntraAuth bool = false
+
+@description('Entra tenant ID used by Container Apps authentication')
+param entraTenantId string = ''
+
+@description('Entra app registration client ID used by Container Apps authentication')
+param entraClientId string = ''
+
+@secure()
+@description('Entra app registration client secret used by Container Apps authentication')
+param entraClientSecret string = ''
+
+@description('Tenant ID used by backend bearer token validation')
+param chatAuthTenantId string = ''
+
+@description('Expected audience used by backend bearer token validation')
+param chatAuthAudience string = ''
+
+@description('Entra app registration client ID used by browser sign-in (MSAL)')
+param chatAuthClientId string = ''
+
+@description('Scope requested by browser sign-in (MSAL)')
+param chatAuthScope string = ''
+
+@description('Allow anonymous access to /api/chat (not recommended for production)')
+param allowUnauthenticatedChat bool = false
 
 @description('VNet address prefix')
 param vnetAddressPrefix string = '10.0.0.0/16'
@@ -112,7 +154,7 @@ resource gptModelDeployment 'Microsoft.CognitiveServices/accounts/deployments@20
     raiPolicyName: 'Microsoft.Default'
   }
   sku: {
-    name: 'Standard'
+    name: openAIDeploymentSkuName
     capacity: openAICapacity
   }
 }
@@ -313,11 +355,6 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
       ingress: {
         external: true
         targetPort: 8080
-        corsPolicy: {
-          allowedOrigins: ['*']
-          allowedMethods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS']
-          allowedHeaders: ['*']
-        }
       }
       registries: [
         {
@@ -376,12 +413,36 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
               name: 'SESSION_POOL_AUDIENCE'
               value: 'https://dynamicsessions.io/.default'
             }
+            {
+              name: 'CHAT_AUTH_TENANT_ID'
+              value: chatAuthTenantId
+            }
+            {
+              name: 'CHAT_AUTH_AUDIENCE'
+              value: chatAuthAudience
+            }
+            {
+              name: 'CHAT_AUTH_CLIENT_ID'
+              value: chatAuthClientId
+            }
+            {
+              name: 'CHAT_AUTH_SCOPE'
+              value: chatAuthScope
+            }
+            {
+              name: 'ALLOW_UNAUTHENTICATED_CHAT'
+              value: allowUnauthenticatedChat ? 'true' : 'false'
+            }
+            {
+              name: 'TRUST_EASYAUTH_HEADERS'
+              value: (enableEntraAuth && !empty(entraClientId) && !empty(entraTenantId) && !empty(entraClientSecret)) ? 'true' : 'false'
+            }
           ]
         }
       ]
       scale: {
         minReplicas: 1
-        maxReplicas: 10
+        maxReplicas: 1
       }
     }
   }
@@ -390,6 +451,28 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
     openAIUserRoleAssignment
     gptModelDeployment
   ]
+}
+
+resource containerAppAuth 'Microsoft.App/containerApps/authConfigs@2024-03-01' = if (enableEntraAuth && !empty(entraClientId) && !empty(entraClientSecret) && !empty(entraTenantId)) {
+  parent: containerApp
+  name: 'current'
+  properties: {
+    platform: {
+      enabled: true
+    }
+    globalValidation: {
+      unauthenticatedClientAction: 'AllowAnonymous'
+    }
+    identityProviders: {
+      azureActiveDirectory: {
+        enabled: true
+        registration: {
+          clientId: entraClientId
+          openIdIssuer: 'https://login.microsoftonline.com/${entraTenantId}/v2.0'
+        }
+      }
+    }
+  }
 }
 
 // Outputs for deployment information

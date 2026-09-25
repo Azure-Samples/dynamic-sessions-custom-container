@@ -22,7 +22,7 @@ Microsoft Agent Framework application with Azure OpenAI and Azure Container Apps
 - `POST /chat/stream` - Streaming responses
 - `GET /health` - Health check
 - `GET /tools` - List tools
-- `DELETE /sessions/<id>` - Clear session
+- `DELETE /api/chat/session` - Clear the caller's opaque session
 
 ## Development
 

@@ -13,6 +13,30 @@
     },
     "principalId": {
       "value": "${AZURE_PRINCIPAL_ID}"
+    },
+    "chatAuthTenantId": {
+      "value": "${CHAT_AUTH_TENANT_ID}"
+    },
+    "chatAuthAudience": {
+      "value": "${CHAT_AUTH_AUDIENCE}"
+    },
+    "chatAuthClientId": {
+      "value": "${CHAT_AUTH_CLIENT_ID}"
+    },
+    "chatAuthScope": {
+      "value": "${CHAT_AUTH_SCOPE}"
+    },
+    "allowUnauthenticatedChat": {
+      "value": "${ALLOW_UNAUTHENTICATED_CHAT=false}"
+    },
+    "enableEntraAuth": {
+      "value": "${ENABLE_ENTRA_AUTH=false}"
+    },
+    "entraTenantId": {
+      "value": "${ENTRA_TENANT_ID}"
+    },
+    "entraClientId": {
+      "value": "${ENTRA_CLIENT_ID}"
     }
   }
 }

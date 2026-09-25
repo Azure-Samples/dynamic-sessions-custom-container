@@ -41,7 +41,7 @@ Use the "Start Agent Framework Server" task in VS Code (Terminal → Run Task)
 ```bash
 # Set environment variables (optional for demo mode)
 $env:AZURE_OPENAI_ENDPOINT = "https://your-resource.openai.azure.com/"
-$env:AZURE_OPENAI_DEPLOYMENT = "gpt-4o-mini"
+$env:AZURE_OPENAI_DEPLOYMENT = "gpt-5.6-sol"
 $env:SESSION_POOL_ENDPOINT = "https://your-session-pool.azurecontainerapps.io"
 $env:SESSION_POOL_AUDIENCE = "https://dynamicsessions.io/.default"
 
@@ -74,7 +74,7 @@ curl http://localhost:8080/api/system/health
   "status": "healthy",
   "azure_openai_configured": true,
   "session_pool_configured": true,
-  "model": "gpt-4o-mini",
+  "model": "gpt-5.6-sol",
   "timestamp": "2025-12-07T12:34:56.789Z"
 }
 ```
@@ -108,68 +108,51 @@ curl http://localhost:8080/api/tools/
 ```
 
 ### Test Chat Endpoint
-```bash
-curl -X POST http://localhost:8080/api/chat/ `
+```powershell
+curl.exe -c cookies.txt -b cookies.txt `
+  -X POST http://localhost:8080/api/chat/ `
   -H "Content-Type: application/json" `
-  -d '{
-    "message": "What is the weather in Seattle?",
-    "conversation_id": "test-123"
-  }'
+  -d '{"prompt":"List the available tools"}'
 ```
 
 **Expected Response:**
 ```json
 {
-  "response": "The weather in Seattle is...",
-  "conversation_id": "test-123",
+  "response": "Available AI Tools: ...",
   "tools_used": [
     {
-      "name": "get_weather",
-      "icon": "🌤️",
-      "description": "Weather: Seattle"
+      "name": "search_tools_available",
+      "icon": "🔧",
+      "description": "Tool discovery"
     }
   ],
-  "tools_available": ["get_weather", "search_tools_available", "execute_in_dynamic_session"],
-  "active_sessions": {}
+  "tools_available": ["search_tools_available", "execute_in_dynamic_session"]
 }
 ```
 
 ### Test Python Execution
-```bash
-curl -X POST http://localhost:8080/api/chat/ `
+```powershell
+curl.exe -c cookies.txt -b cookies.txt `
+  -X POST http://localhost:8080/api/chat/ `
   -H "Content-Type: application/json" `
-  -d '{
-    "message": "Run this Python code: print(\"hello world\")",
-    "conversation_id": "test-456"
-  }'
+  -d '{"prompt":"Run this Python code: print(\"hello world\")"}'
 ```
 
-**Expected Response with Session Info:**
+**Expected Response:**
 ```json
 {
   "response": "✅ **Code Execution Successful** (return code: 0)\n\n**Output:**\n```\nhello world\n```",
-  "conversation_id": "test-456",
   "tools_used": [
     {
       "name": "execute_in_dynamic_session",
       "icon": "📦",
-      "description": "Python Execution",
-      "session_id": "session-a1b2c3d4"
+      "description": "Python Execution"
     }
-  ],
-  "active_sessions": {
-    "session-a1b2c3d4": {
-      "created_at": "2025-12-07T12:34:56.789Z",
-      "execution_count": 1,
-      "last_used": "2025-12-07T12:34:57.123Z",
-      "last_stdout": "hello world\n",
-      "last_stderr": "",
-      "last_status": true,
-      "last_returnCode": 0
-    }
-  }
+  ]
 }
 ```
+
+The cookie jar preserves the caller's private conversation and Dynamic Session state. Session identifiers and execution records are intentionally not returned by the API.
 
 ## Debugging Common Issues
 
@@ -198,32 +181,11 @@ payload = {
 }
 ```
 
-### Issue 2: Active Sessions Not Displaying
-
-**Symptoms:**
-- Session panel shows "No active sessions"
-- Browser console: `undefined` in `updateSessionPanel`
-
-**Cause:**
-Flask-RESTX marshalling filtering out `active_sessions` field
-
-**Solution:**
-Ensure `chat_response_model` includes the field:
-```python
-chat_response_model = api.model('ChatResponse', {
-    'response': fields.String(required=True),
-    'conversation_id': fields.String(required=True),
-    'tools_used': fields.List(fields.Raw()),
-    'tools_available': fields.List(fields.String()),
-    'active_sessions': fields.Raw(description='Active dynamic sessions')  # CRITICAL
-})
-```
-
-### Issue 3: Stderr Not Captured
+### Issue 2: Stderr Not Captured
 
 **Symptoms:**
 - Errors occur but `last_stderr` is empty
-- Session panel doesn't show errors
+- The agent response doesn't include the execution error
 
 **Cause:**
 Session container returns different format than expected
@@ -243,24 +205,23 @@ else:
     return_code = result.get("return_code", 0)
 ```
 
-### Issue 4: Session Not Reused
+### Issue 3: Session Not Reused
 
 **Symptoms:**
 - New session created for each request
-- Session panel shows multiple sessions
+- Follow-up code execution doesn't see prior files or state
 
 **Cause:**
-Hard-coded `session_type = "new"` in execute function
+The API client isn't retaining the opaque session cookie.
 
 **Solution:**
-Check if sessions exist and reuse:
-```python
-if active_sessions:
-    session_id = list(active_sessions.keys())[-1]
-    print(f"♻️ Reusing existing session: {session_id}")
-else:
-    session_id = f"session-{uuid.uuid4().hex[:8]}"
-    print(f"🆕 Creating new session: {session_id}")
+Use a cookie jar for every request in the same conversation:
+
+```powershell
+curl.exe -c cookies.txt -b cookies.txt `
+  -X POST http://localhost:8080/api/chat/ `
+  -H "Content-Type: application/json" `
+  -d '{"prompt":"Run this Python code: print(1 + 1)"}'
 ```
 
 ## Azure Container Apps Logs
@@ -379,7 +340,7 @@ az containerapp logs show `
   --name <your-container-app-name> `
   --resource-group <your-resource-group> `
   --tail 1000 `
-  | Select-String "conversation_id=test-123"
+  | Select-String "NEW REQUEST|TOOL CALLED"
 ```
 
 #### Debug Session Pool Calls
@@ -413,13 +374,11 @@ az containerapp revision list `
 # Health check
 curl https://<your-container-app-name>.<environment-unique-id>.<region>.azurecontainerapps.io/api/system/health
 
-# Test chat
-curl -X POST https://<your-container-app-name>.<environment-unique-id>.<region>.azurecontainerapps.io/api/chat/ `
+# Test chat while preserving the opaque session cookie
+curl.exe -c cookies.txt -b cookies.txt `
+  -X POST https://<your-container-app-name>.<environment-unique-id>.<region>.azurecontainerapps.io/api/chat/ `
   -H "Content-Type: application/json" `
-  -d '{
-    "message": "What is 2+2?",
-    "conversation_id": "test-789"
-  }'
+  -d '{"prompt":"What is 2+2?"}'
 ```
 
 ### Check Managed Identity
@@ -503,7 +462,7 @@ Add print statements in key areas:
 ```python
 print(f"🔍 DEBUG: Payload = {json.dumps(payload, indent=2)}")
 print(f"🔍 DEBUG: Result = {json.dumps(result, indent=2)}")
-print(f"🔍 DEBUG: Active sessions = {active_sessions}")
+print(f"🔍 DEBUG: Execution status = {status}, return code = {return_code}")
 ```
 
 ### Browser Console
@@ -564,9 +523,9 @@ print(f"Token acquired: {token.token[:20]}...")
    - Configure alerts for error patterns
 
 7. **Conversation Tracking**
-   - Always include conversation_id in requests
-   - Use consistent naming patterns for session IDs
-   - Track end-to-end request flows
+   - Preserve the server-issued `HttpOnly` cookie between related requests
+   - Never log or expose the opaque session identifier
+   - Track end-to-end request flows with non-sensitive correlation IDs
 
 ### Logging Conventions
 
@@ -637,9 +596,10 @@ az containerapp show `
 ### Scenario 2: Session Execution Not Working
 ```bash
 # 1. Test the endpoint
-curl -X POST https://<your-container-app-name>.<environment-unique-id>.<region>.azurecontainerapps.io/api/chat/ `
+curl.exe -c cookies.txt -b cookies.txt `
+  -X POST https://<your-container-app-name>.<environment-unique-id>.<region>.azurecontainerapps.io/api/chat/ `
   -H "Content-Type: application/json" `
-  -d '{"message": "Run: print(\"hello\")", "conversation_id": "debug-session"}'
+  -d '{"prompt":"Run: print(\"hello\")"}'
 
 # 2. Check logs for session execution
 az containerapp logs show `
@@ -663,27 +623,22 @@ curl -X POST "https://<your-session-pool-name>.<environment-unique-id>.<region>.
   -d '{"code": "print(\"direct test\")"}'
 ```
 
-### Scenario 3: Active Sessions Not Displaying in UI
+### Scenario 3: Conversation State Is Not Reused
 ```bash
-# 1. Check browser console (F12) for JavaScript errors
-# Look for: updateSessionPanel, undefined, or JSON parse errors
-
-# 2. Test API response directly
-curl https://<your-container-app-name>.<environment-unique-id>.<region>.azurecontainerapps.io/api/chat/ `
+# 1. Test the API with a persistent cookie jar
+curl.exe -c cookies.txt -b cookies.txt `
+  https://<your-container-app-name>.<environment-unique-id>.<region>.azurecontainerapps.io/api/chat/ `
   -X POST `
   -H "Content-Type: application/json" `
-  -d '{"message": "Execute: print(1+1)", "conversation_id": "ui-test"}' `
+  -d '{"prompt":"Execute: print(1+1)"}' `
   | ConvertFrom-Json | ConvertTo-Json -Depth 5
 
-# 3. Verify active_sessions is in response
-# Should see: "active_sessions": { "session-xxxxx": { ... } }
-
-# 4. Check application logs for marshalling issues
+# 2. Check application logs for tool execution
 az containerapp logs show `
   --name <your-container-app-name> `
   --resource-group <your-resource-group> `
   --tail 100 `
-  | Select-String "active_sessions|marshal|response"
+  | Select-String "NEW REQUEST|execute_in_dynamic_session"
 ```
 
 ### Scenario 4: Local vs Azure Behavior Difference
@@ -716,16 +671,17 @@ az containerapp logs show `
 ### Scenario 5: Stderr Not Captured in Error Cases
 ```bash
 # 1. Trigger an error
-curl -X POST https://<your-container-app-name>.<environment-unique-id>.<region>.azurecontainerapps.io/api/chat/ `
+curl.exe -c cookies.txt -b cookies.txt `
+  -X POST https://<your-container-app-name>.<environment-unique-id>.<region>.azurecontainerapps.io/api/chat/ `
   -H "Content-Type: application/json" `
-  -d '{"message": "Run this: 1/0", "conversation_id": "error-test"}'
+  -d '{"prompt":"Run this: 1/0"}'
 
 # 2. Check application logs for result format
 az containerapp logs show `
   --name <your-container-app-name> `
   --resource-group <your-resource-group> `
   --tail 200 `
-  | Select-String "error-test" -Context 10,10
+  | Select-String "Code Execution Failed|return code" -Context 10,10
 
 # 3. Look for session container response format
 # Should show either:
@@ -778,9 +734,10 @@ az containerapp logs show `
   --follow
 
 # Terminal 2: Send test requests
-curl -X POST https://<your-container-app-name>.<environment-unique-id>.<region>.azurecontainerapps.io/api/chat/ `
+curl.exe -c cookies.txt -b cookies.txt `
+  -X POST https://<your-container-app-name>.<environment-unique-id>.<region>.azurecontainerapps.io/api/chat/ `
   -H "Content-Type: application/json" `
-  -d '{"message": "Test message", "conversation_id": "realtime-test"}'
+  -d '{"prompt":"Test message"}'
 ```
 
 ## Additional Resources

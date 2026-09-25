@@ -29,7 +29,7 @@ The application is a Flask-based web interface that leverages **Microsoft Agent 
                     ▼                  ▼
     ┌──────────────────────┐  ┌─────────────────────────────┐
     │  Azure OpenAI        │  │  Dynamic Session Pool       │
-    │  - GPT-4o-mini       │  │  (Custom Containers)        │
+    │  - GPT-5.6-sol       │  │  (Custom Containers)        │
     │  - Agent LLM         │  │                             │
     └──────────────────────┘  │  ┌───────────────────────┐  │
                               │  │ Session Container     │  │
@@ -52,10 +52,11 @@ The application is a Flask-based web interface that leverages **Microsoft Agent 
 - **Custom Container Sessions**: Primary feature using Azure Container Apps dynamic sessions with custom Docker containers for secure Python code execution
 - **Pre-installed Libraries**: Custom container includes numpy, pandas, matplotlib, and data file format support (openpyxl, xlrd, pyarrow, lxml)
 - **Microsoft Agent Framework**: Next-generation AI orchestration with intelligent tool selection
-- **Azure OpenAI Integration**: GPT-4o-mini model with managed identity authentication
+- **Azure OpenAI Integration**: GPT-5.6-sol model with managed identity authentication
 - **Interactive Web UI**: Modern chat interface with session tracking and code execution visualization
 - **Secure Isolated Execution**: Each code execution runs in a separate, secure Hyper-V isolated container
 - **Session Management**: Automatic lifecycle tracking with visual session status indicators
+- **Per-client Isolation**: Opaque, server-generated cookies keep conversation and execution state separate across clients
 
 ## Prerequisites
 
@@ -154,6 +155,98 @@ If you prefer manual configuration, set:
 - `AZURE_OPENAI_CHAT_DEPLOYMENT_NAME` (or `AZURE_OPENAI_DEPLOYMENT`)
 - `AZURE_CONTAINER_APPS_SESSION_POOL_ENDPOINT`
 - `SESSION_POOL_AUDIENCE` (defaults to `https://dynamicsessions.io/.default`)
+- `SESSION_COOKIE_SECURE` (defaults to `false` locally; the Bicep deployment sets it to `true`)
+- `SESSION_COOKIE_MAX_AGE_SECONDS` (defaults to 30 minutes)
+- `MAX_CONVERSATION_THREADS` (defaults to 100)
+- `SESSION_SIGNING_KEY` (optional; generated at process startup when omitted)
+
+### 2b. Configure Chat Authentication (Recommended: Microsoft Entra)
+
+This sample now supports validating Microsoft Entra access tokens directly on `/api/chat/`. This is the recommended production approach because it gives per-caller identity and policy control.
+
+#### Create the Entra app registration (secretless browser sign-in + API audience)
+
+Use these settings when creating the app registration in Microsoft Entra ID.
+
+1. App registration basics:
+  - Name: `dynamic-sessions-custom-container-web`
+  - Supported account types: `Accounts in this organizational directory only (Single tenant)`
+
+2. Authentication:
+  - Platform: `Single-page application (SPA)`
+  - Redirect URI:
+    - `https://<your-container-app-fqdn>/`
+  - Do not create a client secret (this flow uses PKCE).
+  - Do not add this callback under the `Web` platform. The callback must appear under `Single-page application` so Entra permits browser token redemption.
+
+3. Expose an API:
+  - Application ID URI:
+    - `api://<APPLICATION_CLIENT_ID>`
+  - Add scope:
+    - Scope name: `access_as_user`
+    - Who can consent: `Admins and users`
+
+4. Record these values (you will use them below):
+  - Tenant ID
+  - Application (client) ID
+  - Application ID URI (for example `api://<client-id>`)
+
+#### Configure the app for secretless browser sign-in
+
+Set these app environment variables on the container app:
+
+- `CHAT_AUTH_TENANT_ID=<tenant-guid>`
+- `CHAT_AUTH_AUDIENCE=<api-app-client-id>`
+- `CHAT_AUTH_CLIENT_ID=<api-app-client-id>`
+- `CHAT_AUTH_SCOPE=api://<api-app-client-id>/access_as_user`
+- `ALLOW_UNAUTHENTICATED_CHAT=false`
+- `TRUST_EASYAUTH_HEADERS=false`
+
+Example:
+
+```bash
+az containerapp update \
+  --name <app-name> \
+  --resource-group <resource-group> \
+  --set-env-vars CHAT_AUTH_TENANT_ID=<tenant-guid> CHAT_AUTH_AUDIENCE=<api-app-client-id> CHAT_AUTH_CLIENT_ID=<api-app-client-id> CHAT_AUTH_SCOPE=api://<api-app-client-id>/access_as_user ALLOW_UNAUTHENTICATED_CHAT=false TRUST_EASYAUTH_HEADERS=false
+```
+
+#### Smoke test
+
+1. Open the app URL.
+2. Send a chat message.
+3. The app should show a Sign In button and open Microsoft Entra login.
+4. After sign-in, `/api/chat/` requests should succeed.
+
+Token-validation environment variables used by the backend and browser PKCE flow:
+
+- `CHAT_AUTH_TENANT_ID`: Your Entra tenant GUID. If omitted, the app falls back to `AZURE_TENANT_ID`.
+- `CHAT_AUTH_AUDIENCE`: Expected token audience for your API. For Microsoft Entra v2 access tokens, use the API app registration client ID GUID (for example, `<app-registration-client-id>`).
+- `CHAT_AUTH_CLIENT_ID`: Entra app client ID used by browser OAuth sign-in.
+- `CHAT_AUTH_SCOPE`: Scope requested by browser PKCE flow (default: `<CHAT_AUTH_AUDIENCE>/access_as_user`).
+
+Example (Azure Container Apps):
+
+```bash
+az containerapp update \
+  --name <app-name> \
+  --resource-group <resource-group> \
+  --set-env-vars CHAT_AUTH_TENANT_ID=<tenant-guid> CHAT_AUTH_AUDIENCE=<api-app-client-id>
+```
+
+Get a caller token for local testing:
+
+```bash
+az login
+az account get-access-token --scope api://<api-app-client-id>/.default --query accessToken -o tsv
+```
+
+Authorize callers using Entra app roles or group membership. Keep managed identity RBAC least-privileged for outbound calls to Azure OpenAI and the session pool.
+
+Fallback options (not recommended for production):
+
+- Trusted platform headers: set `TRUST_EASYAUTH_HEADERS=true` only when your hosting platform guarantees those headers are injected and stripped from external requests.
+- `ALLOW_UNAUTHENTICATED_CHAT=true` for local-only quick testing.
 
 ### 3. Run Locally
 
@@ -199,14 +292,30 @@ Session Pool: Returns "1,904.93..." (remembers previous calculation)
 
 ### Chat Endpoint
 
-**POST** `/chat`
+**POST** `/api/chat/`
+
+Authentication header (required unless EasyAuth or `ALLOW_UNAUTHENTICATED_CHAT=true` is used):
+
+```http
+Authorization: Bearer <ENTRA_ACCESS_TOKEN>
+```
+
+Example request:
+
+```bash
+curl -X POST "http://localhost:8080/api/chat/" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $ENTRA_ACCESS_TOKEN" \
+  -d '{"prompt":"Calculate the mean of [1,2,3,4,5]","session_id":"user_123"}'
+```
 
 ```json
 {
-  "prompt": "Calculate the mean of [1, 2, 3, 4, 5]",
-  "session_id": "user_123"
+  "prompt": "Calculate the mean of [1, 2, 3, 4, 5]"
 }
 ```
+
+The server creates an opaque `HttpOnly` session cookie. API clients must retain the cookie between requests to preserve conversation and code-execution state.
 
 Response:
 
@@ -214,16 +323,27 @@ Response:
 {
   "response": "I've calculated that for you.",
   "agent": "Microsoft Agent Framework SmartAssistant",
-  "model": "gpt-4o-mini",
+  "model": "gpt-5.6-sol",
   "tools_used": [
     {
       "name": "execute_in_dynamic_session",
       "icon": "📦",
       "description": "Python Execution"
     }
-  ],
-  "session_id": "user_123"
+  ]
 }
+```
+
+For example, with curl:
+
+```bash
+curl -c cookies.txt -b cookies.txt \
+  -X POST http://localhost:8080/api/chat/ \
+  -H "Content-Type: application/json" \
+  -d '{"prompt":"Calculate the mean of [1, 2, 3, 4, 5]"}'
+
+curl -c cookies.txt -b cookies.txt \
+  -X DELETE http://localhost:8080/api/chat/session
 ```
 
 ### Interactive Web Interface
@@ -232,7 +352,7 @@ The web interface demonstrates custom container sessions:
 
 - **Automatic Code Execution**: Math and calculation questions trigger Python code execution in custom containers
 - **Pre-installed Libraries**: Access numpy, pandas, matplotlib, and more without installation
-- **Session Tracking**: Visual indicators show active sessions and which tool was used
+- **Private Session Tracking**: Conversation and execution state is scoped to the caller's opaque cookie
 - **Code Visualization**: See the Python code that was executed and its output
 - **Session Persistence**: Follow-up questions maintain context within the same session
 
@@ -255,7 +375,7 @@ The web interface demonstrates custom container sessions:
 
 ### Azure OpenAI Integration
 
-- **GPT-4o-mini model**: Fast and efficient for agent orchestration and code generation
+- **GPT-5.6-sol model**: Fast and efficient for agent orchestration and code generation
 - **Managed identity**: Keyless authentication for secure service-to-service communication
 - **Automatic code detection**: Identifies when Python execution is needed for math/calculations
 
@@ -265,6 +385,12 @@ The web interface demonstrates custom container sessions:
 - **No credentials in code**: Uses Azure DefaultAzureCredential
 - **Role-based access**: Proper RBAC configuration for OpenAI and session pool access
 - **Container isolation**: Hyper-V isolation for secure code execution
+- **Server-controlled sessions**: Clients cannot choose conversation or Dynamic Session identifiers
+- **Same-origin browser access**: The template does not enable wildcard CORS
+
+> **Security scope:** The deployed sample is intentionally anonymous to preserve a simple gallery experience. The opaque cookie prevents cross-client state sharing, but it is not user authentication. Before using this sample with sensitive data or exposing it for production use, enable Azure Container Apps authentication and authorization, restrict ingress, and apply resource-usage controls.
+
+The sample uses one application replica because conversation threads are intentionally held in memory for simplicity. Cookies are cryptographically signed, threads expire after inactivity, and the in-memory collection is bounded. Production deployments that require scaling or durable conversations should move thread state to a shared store with TTL support.
 
 ## Project Structure
 
@@ -310,7 +436,9 @@ hooks:
 
 Key parameters in `infra/main.bicep`:
 
-- `openAIModelName`: GPT model to deploy (default: gpt-4o-mini)
+- `openAIModelName`: GPT model to deploy (default: gpt-5.6-sol)
+- `openAIModelVersion`: Model version to deploy (default: 2026-07-09)
+- `openAIDeploymentSkuName`: Deployment SKU for the model (default: GlobalStandard)
 - `maxConcurrentSessions`: Maximum parallel sessions (default: 10)
 - `readySessionInstances`: Pre-warmed sessions for fast response (default: 5)
 - `enableVNetIntegration`: Enable private networking (default: false)
@@ -326,7 +454,7 @@ The custom session container (`session-container/Dockerfile`) includes:
 
 ## Resources Deployed
 
-- **Azure OpenAI Service**: GPT-4o-mini deployment for agent intelligence
+- **Azure OpenAI Service**: GPT-5.6-sol deployment for agent intelligence
 - **Container Apps Environment**: Serverless hosting platform
 - **Dynamic Session Pool**: Custom container execution environment
 - **Container Registry**: Stores custom session container image

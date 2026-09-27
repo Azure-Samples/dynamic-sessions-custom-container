@@ -20,6 +20,7 @@ import requests
 import aiohttp
 import jwt
 from jwt import InvalidTokenError
+from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 
 app = Flask(__name__)
 
@@ -118,8 +119,11 @@ CHAT_AUTH_SCOPE = os.getenv("CHAT_AUTH_SCOPE", f"{CHAT_AUTH_AUDIENCE}/access_as_
 
 _entra_jwks_clients: Dict[str, Any] = {}
 
-# Session management storage
-active_sessions: Dict[str, Dict[str, Any]] = {}
+current_session_id: ContextVar[Optional[str]] = ContextVar("current_session_id", default=None)
+request_tools_used: ContextVar[Optional[List[Dict[str, Any]]]] = ContextVar("request_tools_used", default=None)
+session_serializer = URLSafeTimedSerializer(SESSION_SIGNING_KEY, salt="aca-sample-session")
+conversation_threads: Dict[str, Dict[str, Any]] = {}
+conversation_threads_lock = threading.Lock()
 
 
 def _get_request_tools() -> List[Dict[str, Any]]:
@@ -130,16 +134,19 @@ def _get_request_tools() -> List[Dict[str, Any]]:
     return tools
 
 
-def _decode_session_cookie(value: Optional[str]) -> Optional[str]:
+def _decode_session_cookie(value: Optional[str], principal_id: str) -> Optional[str]:
     if not value:
         return None
     try:
-        session_id = session_serializer.loads(
+        payload = session_serializer.loads(
             value,
             max_age=SESSION_COOKIE_MAX_AGE_SECONDS,
         )
     except (BadSignature, SignatureExpired):
         return None
+    if not isinstance(payload, dict) or payload.get("principal_id") != principal_id:
+        return None
+    session_id = payload.get("session_id")
     if not isinstance(session_id, str) or len(session_id) != 32:
         return None
     return session_id
@@ -165,26 +172,29 @@ def _cleanup_conversation_threads(now: float) -> None:
             conversation_threads.pop(session_id, None)
 
 
-def _get_conversation_thread(session_id: str):
+def _get_conversation_session(session_id: str):
     now = time.monotonic()
     with conversation_threads_lock:
         _cleanup_conversation_threads(now)
         state = conversation_threads.get(session_id)
         if state is None:
             state = {
-                "thread": agent.get_new_thread(),
+                "session": agent.create_session(),
                 "last_used": now,
             }
             conversation_threads[session_id] = state
             _cleanup_conversation_threads(now)
         else:
             state["last_used"] = now
-        return state["thread"]
+        return state["session"]
 
 
-@app.before_request
 def assign_client_session() -> None:
-    session_id = _decode_session_cookie(request.cookies.get(SESSION_COOKIE_NAME))
+    principal_id = getattr(g, "authenticated_principal_id", "anonymous")
+    session_id = _decode_session_cookie(
+        request.cookies.get(SESSION_COOKIE_NAME),
+        principal_id,
+    )
     if session_id is None:
         session_id = uuid.uuid4().hex
         g.set_session_cookie = True
@@ -198,7 +208,10 @@ def persist_client_session(response):
     elif getattr(g, "set_session_cookie", False):
         response.set_cookie(
             SESSION_COOKIE_NAME,
-            session_serializer.dumps(g.client_session_id),
+            session_serializer.dumps({
+                "session_id": g.client_session_id,
+                "principal_id": getattr(g, "authenticated_principal_id", "anonymous"),
+            }),
             httponly=True,
             secure=SESSION_COOKIE_SECURE,
             samesite="Lax",
@@ -224,13 +237,13 @@ def _get_entra_jwks_client(tenant_id: str) -> Any:
     return _entra_jwks_clients[tenant_id]
 
 
-def _has_valid_entra_bearer_token() -> bool:
+def _get_bearer_principal_id() -> Optional[str]:
     if not CHAT_AUTH_TENANT_ID or not CHAT_AUTH_AUDIENCE:
-        return False
+        return None
 
     presented_token = _extract_bearer_token(request.headers.get("Authorization", ""))
     if not presented_token:
-        return False
+        return None
 
     try:
         jwks_client = _get_entra_jwks_client(CHAT_AUTH_TENANT_ID)
@@ -252,44 +265,49 @@ def _has_valid_entra_bearer_token() -> bool:
             f"https://sts.windows.net/{CHAT_AUTH_TENANT_ID}/"
         }
         if claims.get("iss") not in valid_issuers:
-            return False
+            return None
 
-        # Require a caller identity claim so only authenticated principals are accepted.
-        return bool(claims.get("oid") or claims.get("sub"))
+        return claims.get("oid") or claims.get("sub")
     except InvalidTokenError as token_error:
         print(f"❌ Chat auth token validation failed: {token_error}")
-        return False
+        return None
     except Exception as auth_error:
         print(f"❌ Chat auth processing error: {auth_error}")
-        return False
+        return None
 
 
-def _has_trusted_easyauth_identity() -> bool:
+def _get_easyauth_principal_id() -> Optional[str]:
     if not TRUST_EASYAUTH_HEADERS:
-        return False
+        return None
 
     principal_id = request.headers.get("X-MS-CLIENT-PRINCIPAL-ID", "")
     principal_provider = request.headers.get("X-MS-CLIENT-PRINCIPAL-IDP", "")
-    return bool(principal_id) and principal_provider.lower() in ("aad", "entra")
+    if principal_id and principal_provider.lower() in ("aad", "entra"):
+        return principal_id
+    return None
 
 
-def _is_authenticated_chat_request() -> bool:
+def _get_authenticated_principal_id() -> Optional[str]:
     if ALLOW_UNAUTHENTICATED_CHAT:
-        return True
-    if _has_valid_entra_bearer_token():
-        return True
-    if _has_trusted_easyauth_identity():
-        return True
-    return False
+        return "anonymous"
+    return _get_bearer_principal_id() or _get_easyauth_principal_id()
 
 
 @app.before_request
 def require_auth_for_chat_endpoints():
-    if request.path.startswith("/api/chat") and not _is_authenticated_chat_request():
+    if not request.path.startswith("/api/chat"):
+        return None
+
+    principal_id = _get_authenticated_principal_id()
+    if not principal_id:
         return jsonify({
             "error": "Authentication required for chat endpoints",
             "details": "Provide a valid Microsoft Entra Bearer token for CHAT_AUTH_AUDIENCE, or configure trusted platform authentication."
         }), 401
+
+    g.authenticated_principal_id = principal_id
+    assign_client_session()
+    return None
 
 # Enhanced AI functions (tools) for the agent
 @tool
@@ -1031,7 +1049,7 @@ def index():
             for (let i = 0; i < bytes.length; i++) {
                 binary += String.fromCharCode(bytes[i]);
             }
-            return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+            return btoa(binary).replace(/\\+/g, '-').replace(/\\//g, '_').replace(/=+$/g, '');
         }
 
         function randomString(length = 64) {
@@ -1195,8 +1213,8 @@ def index():
                 // Escape first so untrusted sandbox output cannot inject markup,
                 // then apply markdown-style formatting.
                 let formatted = escapeHtml(text)
-                    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-                    .replace(/```([\s\S]*?)```/g, '<pre>$1</pre>')
+                    .replace(/\\*\\*(.+?)\\*\\*/g, '<strong>$1</strong>')
+                    .replace(/```([\\s\\S]*?)```/g, '<pre>$1</pre>')
                     .replace(/`([^`]+)`/g, '<code>$1</code>');
                 messageContent.innerHTML = formatted;
             } else {
@@ -1317,47 +1335,6 @@ def index():
                 .replace(/'/g, '&#39;');
         }
 
-        function updateSessionPanel(sessions) {
-            const sessionList = document.getElementById('sessionList');
-            console.log('📊 Updating session panel:', sessions);
-            
-            if (!sessions || Object.keys(sessions).length === 0) {
-                console.log('⚠️ No sessions to display');
-                sessionList.innerHTML = '<div class="no-sessions">No active sessions</div>';
-                return;
-            }
-            
-            console.log('✅ Found', Object.keys(sessions).length, 'sessions');
-            let html = '';
-            for (const [sessionId, sessionData] of Object.entries(sessions)) {
-                const shortId = sessionId.substring(0, 16);
-                console.log('  📝 Session:', shortId, sessionData);
-                const jsonData = JSON.stringify(sessionData, null, 2);
-                
-                // Format session data with better readability
-                html += `
-                    <div class="session-item">
-                        <div class="session-header">🔹 Session ID: ${escapeHtml(shortId)}...</div>
-                        <div class="session-details">
-                            <div><strong>Executions:</strong> ${escapeHtml(sessionData.execution_count || 0)}</div>
-                            <div><strong>Created:</strong> ${escapeHtml(new Date(sessionData.created_at).toLocaleTimeString())}</div>
-                            ${sessionData.last_used ? `<div><strong>Last Used:</strong> ${escapeHtml(new Date(sessionData.last_used).toLocaleTimeString())}</div>` : ''}
-                            ${sessionData.last_status ? `<div><strong>Status:</strong> ${escapeHtml(sessionData.last_status)}</div>` : ''}
-                            ${sessionData.last_returnCode !== undefined ? `<div><strong>Return Code:</strong> ${escapeHtml(sessionData.last_returnCode)}</div>` : ''}
-                            ${sessionData.last_stdout ? `<div class="output-section"><strong>stdout:</strong><pre>${escapeHtml(sessionData.last_stdout)}</pre></div>` : ''}
-                            ${sessionData.last_stderr ? `<div class="error-section"><strong>stderr:</strong><pre>${escapeHtml(sessionData.last_stderr)}</pre></div>` : ''}
-                        </div>
-                        <details class="session-json-toggle">
-                            <summary>View Raw JSON</summary>
-                            <pre class="session-json">${escapeHtml(jsonData)}</pre>
-                        </details>
-                    </div>
-                `;
-            }
-            sessionList.innerHTML = html;
-        }
-        
-
         initBrowserAuth();
 
         // Focus input on load
@@ -1379,7 +1356,7 @@ class Chat(Resource):
         """Send a message to the AI agent and get a response with automatic tool selection"""
         data = request.get_json(silent=True) or {}
         prompt = data.get("prompt", "")
-        session_id = data.get("session_id", "default")
+        session_id = g.client_session_id
         
         if not isinstance(prompt, str) or not prompt.strip():
             return {"error": "No prompt provided"}, 400
@@ -1394,24 +1371,23 @@ class Chat(Resource):
             print(f"📝 User Input: {prompt}")
             print("🤖 Agent analyzing request and selecting appropriate tools...")
             
-            # Get or create conversation session for continuity
-            if session_id not in conversation_threads:
-                conversation_threads[session_id] = agent.create_session()
-
-            session = conversation_threads[session_id]
-
-            # Reset tool usage tracking for this request
-            global current_tools_used, current_request_sessions
-            current_tools_used = []
-            current_request_sessions = set()
-            print(f"🔧 DEBUG: Reset current_tools_used and session tracking, starting fresh for this request")
+            session = _get_conversation_session(session_id)
+            tools_used = []
+            session_token = current_session_id.set(session_id)
+            tools_token = request_tools_used.set(tools_used)
 
             # Run the agent asynchronously with conversation session
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            print(f"🤖 DEBUG: About to call agent.run() with prompt: {prompt[:50]}...")
-            result = loop.run_until_complete(agent.run(prompt, session=session))
-            loop.close()
+            try:
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                print(f"🤖 DEBUG: About to call agent.run() with prompt: {prompt[:50]}...")
+                try:
+                    result = loop.run_until_complete(agent.run(prompt, session=session))
+                finally:
+                    loop.close()
+            finally:
+                current_session_id.reset(session_token)
+                request_tools_used.reset(tools_token)
             print(f"🤖 DEBUG: agent.run() completed")
             
             print(f"🔧 DEBUG: Tools used during this request: {tools_used}")
@@ -1434,8 +1410,7 @@ class Chat(Resource):
                 "model": AZURE_OPENAI_DEPLOYMENT,
                 "tools_used": tools_used,
                 "tools_available": tools_available,
-                "conversation_length": 0,
-                "active_sessions": sessions_copy if sessions_copy else None
+                "conversation_length": 0
             }
             return response_data
         except Exception as e:
@@ -1454,7 +1429,7 @@ class ChatStream(Resource):
         """Stream responses from the AI agent in real-time (experimental)"""
         data = request.get_json(silent=True) or {}
         prompt = data.get("prompt", "")
-        session_id = data.get("session_id", "default")
+        session_id = g.client_session_id
         
         if not isinstance(prompt, str) or not prompt.strip():
             return {"error": "No prompt provided"}, 400
@@ -1463,11 +1438,7 @@ class ChatStream(Resource):
             print("\n🚀 STREAMING REQUEST")
             print(f"📝 User Input: {prompt}")
             
-            # Get or create conversation session
-            if session_id not in conversation_threads:
-                conversation_threads[session_id] = agent.create_session()
-
-            session = conversation_threads[session_id]
+            session = _get_conversation_session(session_id)
 
             def stream_generator():
                 q = queue.Queue()
@@ -1630,14 +1601,13 @@ class SessionManager(Resource):
     @api.doc('clear_session')
     @api.response(200, 'Session cleared successfully')
     @api.response(401, 'Unauthorized', error_response_model)
-    @api.response(404, 'Session not found')
-    def delete(self, session_id):
-        """Clear conversation history for a specific session"""
-        if session_id in conversation_threads:
-            del conversation_threads[session_id]
-            return {"message": f"Session {session_id} cleared"}
-        else:
-            return {"message": f"Session {session_id} not found"}, 404
+    def delete(self):
+        """Clear the authenticated caller's current conversation."""
+        session_id = g.client_session_id
+        with conversation_threads_lock:
+            conversation_threads.pop(session_id, None)
+        g.clear_session_cookie = True
+        return {"message": "Session cleared"}
 
 if __name__ == "__main__":
     print("🚀 Starting Microsoft Agent Framework SmartAssistant")

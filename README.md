@@ -306,7 +306,7 @@ Example request:
 curl -X POST "http://localhost:8080/api/chat/" \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $ENTRA_ACCESS_TOKEN" \
-  -d '{"prompt":"Calculate the mean of [1,2,3,4,5]","session_id":"user_123"}'
+  -d '{"prompt":"Calculate the mean of [1,2,3,4,5]"}'
 ```
 
 ```json
@@ -315,7 +315,7 @@ curl -X POST "http://localhost:8080/api/chat/" \
 }
 ```
 
-The server creates an opaque `HttpOnly` session cookie. API clients must retain the cookie between requests to preserve conversation and code-execution state.
+The server ignores caller-provided session identifiers. It creates a signed, opaque `HttpOnly` cookie bound to the authenticated principal and uses the verified identifier for both conversation state and Dynamic Sessions routing. API clients must retain the cookie between requests.
 
 Response:
 

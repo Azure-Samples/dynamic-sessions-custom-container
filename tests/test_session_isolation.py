@@ -15,9 +15,9 @@ def fake_ai_function(func=None, **_kwargs):
 
 
 agent_framework = types.ModuleType("agent_framework")
-agent_framework.ChatAgent = object
-agent_framework.AgentThread = object
-agent_framework.ai_function = fake_ai_function
+agent_framework.Agent = object
+agent_framework.AgentSession = object
+agent_framework.tool = fake_ai_function
 agent_framework_azure = types.ModuleType("agent_framework.azure")
 agent_framework_azure.AzureOpenAIChatClient = object
 sys.modules["agent_framework"] = agent_framework
@@ -26,7 +26,7 @@ sys.modules["agent_framework.azure"] = agent_framework_azure
 import main
 
 
-class FakeThread:
+class FakeSession:
     def __init__(self):
         self.messages = []
 
@@ -37,11 +37,11 @@ class FakeResult:
 
 
 class FakeAgent:
-    def get_new_thread(self):
-        return FakeThread()
+    def create_session(self):
+        return FakeSession()
 
-    async def run(self, prompt, thread):
-        thread.messages.append(prompt)
+    async def run(self, prompt, session):
+        session.messages.append(prompt)
         return FakeResult(f"echo: {prompt}")
 
 
@@ -72,6 +72,8 @@ class SessionIsolationTests(unittest.TestCase):
     def setUp(self):
         main.agent = FakeAgent()
         main.conversation_threads.clear()
+        main.ALLOW_UNAUTHENTICATED_CHAT = True
+        main.TRUST_EASYAUTH_HEADERS = False
         main.app.config["TESTING"] = True
 
     def test_caller_supplied_session_id_is_ignored(self):
@@ -109,8 +111,8 @@ class SessionIsolationTests(unittest.TestCase):
         client.post("/api/chat/", json={"prompt": "second"})
 
         self.assertEqual(len(main.conversation_threads), 1)
-        thread = next(iter(main.conversation_threads.values()))["thread"]
-        self.assertEqual(thread.messages, ["first", "second"])
+        session = next(iter(main.conversation_threads.values()))["session"]
+        self.assertEqual(session.messages, ["first", "second"])
 
     def test_session_cookie_is_http_only_and_secure_over_https(self):
         client = main.app.test_client()
@@ -137,6 +139,33 @@ class SessionIsolationTests(unittest.TestCase):
         self.assertNotIn("a" * 32, main.conversation_threads)
         self.assertIn(main.SESSION_COOKIE_NAME, cookie)
         self.assertEqual(len(main.conversation_threads), 1)
+
+    def test_cookie_is_bound_to_authenticated_principal(self):
+        client = main.app.test_client()
+        main.ALLOW_UNAUTHENTICATED_CHAT = False
+        main.TRUST_EASYAUTH_HEADERS = True
+
+        first_response = client.post(
+            "/api/chat/",
+            json={"prompt": "first"},
+            headers={
+                "X-MS-CLIENT-PRINCIPAL-ID": "user-a",
+                "X-MS-CLIENT-PRINCIPAL-IDP": "aad",
+            },
+        )
+        second_response = client.post(
+            "/api/chat/",
+            json={"prompt": "second"},
+            headers={
+                "X-MS-CLIENT-PRINCIPAL-ID": "user-b",
+                "X-MS-CLIENT-PRINCIPAL-IDP": "aad",
+            },
+        )
+
+        self.assertEqual(first_response.status_code, 200)
+        self.assertEqual(second_response.status_code, 200)
+        self.assertEqual(len(main.conversation_threads), 2)
+        self.assertIn(main.SESSION_COOKIE_NAME, second_response.headers["Set-Cookie"])
 
     def test_delete_clears_only_the_callers_session(self):
         first_client = main.app.test_client()
